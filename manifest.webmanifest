@@ -1,13 +1,16 @@
 {
-  "name": "Skyline VR",
+  "name": "Skyline VR — Fable Iteration 1",
   "short_name": "Skyline VR",
-  "description": "A browser-based head-controlled wingsuit flying prototype.",
-  "start_url": "./",
+  "description": "A first-person, head-controlled wingsuit flight sandbox for iPhone VR holders.",
+  "id": "./",
+  "start_url": "./?v=fable-1.0.0",
+  "scope": "./",
   "display": "standalone",
   "orientation": "landscape",
-  "background_color": "#91b5c8",
-  "theme_color": "#91b5c8",
+  "background_color": "#9cc5d3",
+  "theme_color": "#9cc5d3",
   "icons": [
-    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    { "src": "./apple-touch-icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any" },
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
   ]
 }

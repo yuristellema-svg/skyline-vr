@@ -1,47 +1,55 @@
-# Skyline VR
+# Skyline VR — Fable Iteration 1
 
-A no-build, browser-based wingsuit flying prototype for desktop and iPhone cardboard-style VR headsets.
+A first-person, browser-based wingsuit flying sandbox built for an iPhone 14 in a phone VR holder.
 
-## Current prototype
+## This build
 
-- Procedural low-poly valley and river
-- Two fly-under bridges
-- Speed gained by diving and lost while climbing
-- Roll-to-turn flight controls
-- Terrain and bridge collision with checkpoint restarts
-- Desktop mouse/keyboard controls
-- iPhone DeviceOrientation head controls
-- Manual side-by-side stereo rendering
-- PWA metadata and offline caching
+- First-person only, with fixed wingtips as a stable visual reference
+- Head pitch controls dive/climb; head roll controls bank; head yaw is ignored
+- Alpha-free iPhone tracking using only beta/gamma tilt data
+- 5° pitch and 4° roll dead zones, tap-anywhere recenter, and automatic respawn recenter
+- Assisted energy model: 110 km/h spawn, roughly 100 km/h cruise, 60 km/h floor, 220 km/h ceiling
+- One 4 km × 600 m valley with a 30 m river, two stone bridges, and a looping updraft
+- Water, terrain, valley-wall, and bridge collision
+- 0.3 s white impact fade, 1 s hold, and 3 s mirrored-eye respawn countdown
+- Manual off-axis side-by-side stereo with 64 mm eye separation
+- Dynamic per-eye comfort vignette above 160 km/h
+- Fixed 1× pixel ratio, no shadows, instanced scenery, and 120 Hz fixed-step physics
+- Network-first service worker so future GitHub uploads replace the old build
 
-## Test on a computer immediately
+## Upload to GitHub
 
-Unzip the project and double-click `index.html`. The bundled build runs without installing anything.
+Upload **everything inside this folder** to the root of `yuristellema-svg/skyline-vr`, including the `vendor` folder. Existing files with the same names should be replaced.
 
-For development, a local static server is still useful:
+GitHub Pages remains configured as:
 
-```bash
-python -m http.server 8000
-```
+- Source: Deploy from a branch
+- Branch: `main`
+- Folder: `/(root)`
 
-## Phone access after GitHub Pages is enabled
+The permanent game address is:
 
-Open the GitHub Pages URL in Safari. Tap **Start phone VR**, grant motion access, rotate to landscape, and place the phone in the headset. For the cleanest full-screen launch, use Safari's Share menu and choose **Add to Home Screen**.
+`https://yuristellema-svg.github.io/skyline-vr/?v=fable-1.0.0`
+
+The version query ensures the first load bypasses the previous prototype's old cache. Later builds use a network-first update strategy.
 
 ## Controls
 
-Desktop:
-- Mouse position: pitch and roll
-- W/S: pitch
-- A/D: roll
-- C: switch camera
-- R: restart
+Phone VR:
 
-Phone:
-- Head pitch: dive/climb
-- Head tilt: bank/turn
-- Recenter button: set the current head position as neutral
+- Look down: dive and gain speed
+- Look up: climb and lose speed
+- Tilt head right/left: bank and turn
+- Tap anywhere during flight: recenter
 
-## Project authority
+Desktop preview:
 
-Major creative or technical decisions should be escalated to Fable. Small implementation choices, fixes, and testing can proceed without escalation.
+- Mouse up/down: climb/dive
+- Mouse left/right: bank
+- W/S: climb/dive
+- A/D: bank
+- R: test the crash/respawn sequence
+
+## Honest test boundary
+
+The build can be structurally and visually checked on desktop. Sustained stereo 60 fps, sensor direction, headset access to tap, and ten-minute comfort must be verified on the actual iPhone 14 and headset. Test with Low Power Mode disabled and begin with a short session.

@@ -1,616 +1,1207 @@
 import * as THREE from './vendor/three.module.min.js';
 
+// Skyline VR — Fable locked Iteration 1
+// Units are metres, seconds, radians, and metres per second.
+
+const DEG = Math.PI / 180;
+const SETTINGS = Object.freeze({
+  version: 'fable-1.0.0',
+  routeStartZ: 100,
+  routeEndZ: -3900,
+  terrainStartZ: 300,
+  terrainEndZ: -4100,
+  halfWidth: 300,
+  riverHalfWidth: 15,
+  spawnAltitude: 250,
+  bridge1Z: -1400,
+  bridge2Z: -2700,
+  updraftZ: -3650,
+  updraftRadius: 58,
+  fogNear: 800,
+  fogFar: 1500,
+  playerHalfX: 2.2,
+  playerHalfY: 0.9,
+  playerHalfZ: 1.4,
+  minSpeed: 60 / 3.6,
+  cruiseSpeed: 100 / 3.6,
+  spawnSpeed: 110 / 3.6,
+  comfortSpeed: 160 / 3.6,
+  maxSpeed: 220 / 3.6,
+  trimPitch: -3 * DEG,
+  maxPitch: 40 * DEG,
+  maxBank: 60 * DEG,
+  pitchRate: 45 * DEG,
+  bankRate: 60 * DEG,
+  pitchDeadzone: 5 * DEG,
+  rollDeadzone: 4 * DEG,
+  fullHeadPitch: 40 * DEG,
+  fullHeadRoll: 40 * DEG,
+  eyeSeparation: 0.064,
+  physicsStep: 1 / 120,
+});
+
 const canvas = document.querySelector('#game');
 const startPanel = document.querySelector('#start-panel');
+const phoneStart = document.querySelector('#phone-start');
 const desktopStart = document.querySelector('#desktop-start');
-const vrStart = document.querySelector('#vr-start');
-const hud = document.querySelector('#hud');
-const controls = document.querySelector('#controls');
-const speedEl = document.querySelector('#speed');
-const altitudeEl = document.querySelector('#altitude');
-const distanceEl = document.querySelector('#distance');
-const messageEl = document.querySelector('#message');
-const rotateEl = document.querySelector('#rotate');
-const cameraButton = document.querySelector('#camera-button');
-const recenterButton = document.querySelector('#recenter-button');
-const vrButton = document.querySelector('#vr-button');
-const restartButton = document.querySelector('#restart-button');
+const startStatus = document.querySelector('#start-status');
+const orientationWarning = document.querySelector('#orientation-warning');
+const eyeMessage = document.querySelector('#eye-message');
+const eyeLeft = eyeMessage.querySelector('.eye-left');
+const eyeRight = eyeMessage.querySelector('.eye-right');
+const vignette = document.querySelector('#vignette');
+const fade = document.querySelector('#fade');
 
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({
+    canvas,
+    antialias: true,
+    alpha: false,
+    powerPreference: 'high-performance',
+  });
+} catch (error) {
+  startStatus.textContent = 'This browser could not start 3D graphics. Try Safari on the iPhone or a current desktop browser.';
+  startStatus.classList.add('error');
+  throw error;
+}
+
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 1.04;
 renderer.shadowMap.enabled = false;
-renderer.setClearColor(0x91b5c8, 1);
+renderer.setPixelRatio(1);
+renderer.setClearColor(0x9cc5d3, 1);
+renderer.sortObjects = true;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x91b5c8);
-scene.fog = new THREE.Fog(0x91b5c8, 260, 1500);
+scene.fog = new THREE.Fog(0x9cc5d3, SETTINGS.fogNear, SETTINGS.fogFar);
 
-const camera = new THREE.PerspectiveCamera(72, 1, 0.1, 2200);
-const eyeCamera = new THREE.PerspectiveCamera(72, 1, 0.1, 2200);
-const cameraRig = new THREE.Group();
-cameraRig.add(camera);
-scene.add(cameraRig);
+const camera = new THREE.PerspectiveCamera(74, 1, 0.08, 1700);
+camera.focus = 12;
+const stereoCamera = new THREE.StereoCamera();
+stereoCamera.aspect = 0.5;
+stereoCamera.eyeSep = SETTINGS.eyeSeparation;
+scene.add(camera);
 
-scene.add(new THREE.HemisphereLight(0xd8f0ff, 0x6c624c, 2.2));
-const sun = new THREE.DirectionalLight(0xffefd2, 2.1);
-sun.position.set(-180, 260, 120);
-scene.add(sun);
+scene.add(new THREE.HemisphereLight(0xe8f7ff, 0x5b5b49, 1.75));
+const sunlight = new THREE.DirectionalLight(0xffe8c5, 2.25);
+sunlight.position.set(-260, 420, 180);
+scene.add(sunlight);
 
-const WORLD_LENGTH = 6200;
-const WORLD_HALF_WIDTH = 450;
-const START = new THREE.Vector3(0, 165, 120);
-const FORWARD = new THREE.Vector3(0, 0, -1);
-const UP = new THREE.Vector3(0, 1, 0);
-const clock = new THREE.Clock();
-
-let running = false;
-let stereo = false;
-let phoneMode = false;
-let cameraMode = 'chase';
-let crashed = false;
-let checkpointZ = 120;
-let distanceTravelled = 0;
-let lastTime = performance.now();
+const state = {
+  phase: 'menu', // menu | calibrating | flying | crashing | respawning | looping | loopReturn
+  phone: false,
+  stereo: false,
+  phaseStarted: 0,
+  loopResetDone: false,
+  updraftActive: false,
+  updraftElapsed: 0,
+  toast: '',
+  toastUntil: 0,
+  wakeLock: null,
+};
 
 const flight = {
-  position: START.clone(),
-  speed: 42,
-  pitch: -0.08,
-  roll: 0,
-  yaw: 0,
-  pitchTarget: -0.08,
-  rollTarget: 0,
+  position: new THREE.Vector3(),
+  speed: SETTINGS.spawnSpeed,
+  pitch: SETTINGS.trimPitch,
+  bank: 0,
+  heading: 0,
+  quaternion: new THREE.Quaternion(),
 };
 
 const input = {
   mouseX: 0,
   mouseY: 0,
+  mouseOriginX: null,
+  mouseOriginY: null,
   keyPitch: 0,
   keyRoll: 0,
-  deviceReady: false,
-  baselinePitch: 0,
-  baselineRoll: 0,
-  rawPitch: 0,
-  rawRoll: 0,
+};
+
+const sensor = {
+  listening: false,
+  valid: false,
+  calibrated: false,
+  latestPitchDown: 0,
+  latestRollRight: 0,
+  baselinePitchDown: 0,
+  baselineRollRight: 0,
+  lastSampleTime: 0,
+  samples: [],
+  waiter: null,
 };
 
 const temp = {
-  q: new THREE.Quaternion(),
-  qPitch: new THREE.Quaternion(),
   qYaw: new THREE.Quaternion(),
+  qPitch: new THREE.Quaternion(),
   qRoll: new THREE.Quaternion(),
   forward: new THREE.Vector3(),
-  right: new THREE.Vector3(),
   up: new THREE.Vector3(),
-  targetCamera: new THREE.Vector3(),
-  lookTarget: new THREE.Vector3(),
-  eyeOffset: new THREE.Vector3(),
-  cameraPosition: new THREE.Vector3(),
-  cameraQuaternion: new THREE.Quaternion(),
+  right: new THREE.Vector3(),
+  playerBox: new THREE.Box3(),
+  playerMin: new THREE.Vector3(),
+  playerMax: new THREE.Vector3(),
+  look: new THREE.Vector3(),
+  matrix: new THREE.Matrix4(),
+  position: new THREE.Vector3(),
+  quaternion: new THREE.Quaternion(),
+  scale: new THREE.Vector3(),
 };
 
-function floorHeight(x, z) {
-  const longitudinal = Math.sin(z * 0.0042) * 5 + Math.sin(z * 0.011 + 1.8) * 2.3;
-  const halfWidth = 90 + Math.sin(z * 0.0016) * 28 + Math.sin(z * 0.006) * 10;
-  const outside = Math.max(0, Math.abs(x) - halfWidth);
-  const mountain = Math.pow(outside, 1.28) * 0.17;
-  const detail = Math.sin(x * 0.028 + z * 0.008) * 3 + Math.sin(x * 0.065 - z * 0.012) * 1.4;
-  return longitudinal + mountain + detail * Math.min(1, outside / 50);
+const FORWARD = new THREE.Vector3(0, 0, -1);
+const UP = new THREE.Vector3(0, 1, 0);
+const RIGHT = new THREE.Vector3(1, 0, 0);
+const bridgeColliders = [];
+const bridgeSpecs = [];
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
-function makeTerrain() {
-  const xSeg = 90;
-  const zSeg = 180;
-  const geometry = new THREE.PlaneGeometry(WORLD_HALF_WIDTH * 2, WORLD_LENGTH, xSeg, zSeg);
+function moveToward(current, target, maxDelta) {
+  if (Math.abs(target - current) <= maxDelta) return target;
+  return current + Math.sign(target - current) * maxDelta;
+}
+
+function smoothstep(min, max, value) {
+  const t = clamp((value - min) / (max - min), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+function wrapPi(value) {
+  return Math.atan2(Math.sin(value), Math.cos(value));
+}
+
+function signedDeadzone(value, deadzone, fullScale) {
+  const magnitude = Math.abs(value);
+  if (magnitude <= deadzone) return 0;
+  return Math.sign(value) * clamp((magnitude - deadzone) / (fullScale - deadzone), 0, 1);
+}
+
+function seededRandom(seed = 481516) {
+  let value = seed >>> 0;
+  return () => {
+    value += 0x6d2b79f5;
+    let t = value;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function centreFloorHeight(z) {
+  const progress = (SETTINGS.routeStartZ - z) / 4000;
+  return 5 - progress * 18 + Math.sin(z * 0.0051) * 3.4 + Math.sin(z * 0.0137 + 1.3) * 1.8;
+}
+
+function valleyWidth(z) {
+  return 82 + Math.sin(z * 0.0027) * 12 + Math.sin(z * 0.0091 + 2.1) * 6;
+}
+
+function terrainHeight(x, z) {
+  const floor = centreFloorHeight(z);
+  const flatHalfWidth = valleyWidth(z);
+  const wallT = clamp((Math.abs(x) - flatHalfWidth) / (SETTINGS.halfWidth - flatHalfWidth), 0, 1);
+  const wall = 300 * Math.pow(wallT, 1.62);
+  const ridge = wallT * (
+    Math.sin(x * 0.032 + z * 0.0067) * 13 +
+    Math.sin(x * 0.071 - z * 0.011) * 6 +
+    Math.sin(x * 0.015 + z * 0.021) * 4
+  );
+  return floor + wall + ridge;
+}
+
+function riverHeight(z) {
+  return centreFloorHeight(z) + 0.72;
+}
+
+function buildTerrain() {
+  const xSegments = 88;
+  const zSegments = 248;
+  const length = SETTINGS.terrainStartZ - SETTINGS.terrainEndZ;
+  const centreZ = (SETTINGS.terrainStartZ + SETTINGS.terrainEndZ) * 0.5;
+  const geometry = new THREE.PlaneGeometry(SETTINGS.halfWidth * 2, length, xSegments, zSegments);
   geometry.rotateX(-Math.PI / 2);
-  geometry.translate(0, 0, -WORLD_LENGTH / 2 + 180);
+  geometry.translate(0, 0, centreZ);
 
-  const pos = geometry.attributes.position;
-  const colors = [];
-  const low = new THREE.Color(0x7e8d58);
-  const high = new THREE.Color(0x8a7d65);
-  const rock = new THREE.Color(0x67665f);
-  const c = new THREE.Color();
+  const position = geometry.attributes.position;
+  const colors = new Float32Array(position.count * 3);
+  const meadow = new THREE.Color(0x73845d);
+  const moss = new THREE.Color(0x526b4f);
+  const rock = new THREE.Color(0x756f66);
+  const highRock = new THREE.Color(0x9a9184);
+  const color = new THREE.Color();
 
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i);
-    const z = pos.getZ(i);
-    const y = floorHeight(x, z);
-    pos.setY(i, y);
+  for (let i = 0; i < position.count; i += 1) {
+    const x = position.getX(i);
+    const z = position.getZ(i);
+    const y = terrainHeight(x, z);
+    position.setY(i, y);
 
-    const slopeHint = THREE.MathUtils.clamp((y - 6) / 90, 0, 1);
-    c.copy(low).lerp(high, slopeHint * 0.7).lerp(rock, Math.max(0, slopeHint - 0.5));
-    const variation = (Math.sin(x * 0.13 + z * 0.037) + 1) * 0.018;
-    c.offsetHSL(0, 0, variation - 0.018);
-    colors.push(c.r, c.g, c.b);
+    const width = valleyWidth(z);
+    const wallT = clamp((Math.abs(x) - width) / (SETTINGS.halfWidth - width), 0, 1);
+    color.copy(meadow).lerp(moss, smoothstep(0, 0.35, wallT));
+    color.lerp(rock, smoothstep(0.25, 0.72, wallT));
+    color.lerp(highRock, smoothstep(0.76, 1, wallT));
+    const variation = (Math.sin(x * 0.15 + z * 0.043) + Math.sin(z * 0.097)) * 0.012;
+    color.offsetHSL(0, 0, variation);
+    colors[i * 3] = color.r;
+    colors[i * 3 + 1] = color.g;
+    colors[i * 3 + 2] = color.b;
   }
 
-  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geometry.computeVertexNormals();
-  const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, flatShading: true });
-  const mesh = new THREE.Mesh(geometry, material);
-  scene.add(mesh);
+  const material = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+  const terrain = new THREE.Mesh(geometry, material);
+  terrain.name = 'Four-kilometre valley';
+  scene.add(terrain);
 }
 
-function makeRiver() {
-  const geometry = new THREE.PlaneGeometry(44, WORLD_LENGTH, 1, 180);
-  geometry.rotateX(-Math.PI / 2);
-  geometry.translate(0, 1.2, -WORLD_LENGTH / 2 + 180);
-  const material = new THREE.MeshStandardMaterial({
-    color: 0x4f9bb2,
-    roughness: 0.24,
-    metalness: 0.18,
-    transparent: true,
-    opacity: 0.88,
+function buildRiver() {
+  const segments = 240;
+  const startZ = SETTINGS.terrainStartZ;
+  const endZ = SETTINGS.terrainEndZ;
+  const positions = new Float32Array((segments + 1) * 2 * 3);
+  const uvs = new Float32Array((segments + 1) * 2 * 2);
+  const indices = [];
+
+  for (let i = 0; i <= segments; i += 1) {
+    const t = i / segments;
+    const z = THREE.MathUtils.lerp(startZ, endZ, t);
+    const y = riverHeight(z);
+    for (let side = 0; side < 2; side += 1) {
+      const vertex = i * 2 + side;
+      positions[vertex * 3] = side === 0 ? -SETTINGS.riverHalfWidth : SETTINGS.riverHalfWidth;
+      positions[vertex * 3 + 1] = y;
+      positions[vertex * 3 + 2] = z;
+      uvs[vertex * 2] = side;
+      uvs[vertex * 2 + 1] = t * 48;
+    }
+    if (i < segments) {
+      const a = i * 2;
+      // Counter-clockwise from above so the river remains visible with FrontSide culling.
+      indices.push(a, a + 1, a + 2, a + 2, a + 1, a + 3);
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uFogColor: { value: new THREE.Color(0x9cc5d3) },
+      uFogNear: { value: SETTINGS.fogNear },
+      uFogFar: { value: SETTINGS.fogFar },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      varying float vDepth;
+      void main() {
+        vUv = uv;
+        vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
+        vDepth = -viewPosition.z;
+        gl_Position = projectionMatrix * viewPosition;
+      }
+    `,
+    fragmentShader: `
+      uniform float uTime;
+      uniform vec3 uFogColor;
+      uniform float uFogNear;
+      uniform float uFogFar;
+      varying vec2 vUv;
+      varying float vDepth;
+      void main() {
+        float a = sin(vUv.y * 2.8 - uTime * 2.4 + vUv.x * 7.0);
+        float b = sin(vUv.y * 7.3 - uTime * 4.1 - vUv.x * 11.0);
+        float glint = smoothstep(0.72, 1.0, a * 0.55 + b * 0.45);
+        vec3 deep = vec3(0.035, 0.13, 0.17);
+        vec3 pale = vec3(0.20, 0.48, 0.55);
+        vec3 water = mix(deep, pale, glint * 0.52 + 0.08);
+        float fogAmount = smoothstep(uFogNear, uFogFar, vDepth);
+        gl_FragColor = vec4(mix(water, uFogColor, fogAmount), 1.0);
+      }
+    `,
   });
+
   const river = new THREE.Mesh(geometry, material);
+  river.name = 'Thirty-metre river';
   scene.add(river);
   return river;
 }
 
-const colliders = [];
-function addBox(x, y, z, sx, sy, sz, color, collider = false) {
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(sx, sy, sz),
-    new THREE.MeshStandardMaterial({ color, roughness: 0.9, flatShading: true })
-  );
-  mesh.position.set(x, y, z);
+function addCollider(minX, maxX, minY, maxY, minZ, maxZ) {
+  bridgeColliders.push(new THREE.Box3(
+    new THREE.Vector3(minX, minY, minZ),
+    new THREE.Vector3(maxX, maxY, maxZ)
+  ));
+}
+
+function makeArchShape(outerHalfWidth, bottom, top, openingWidth, openingHeight) {
+  const shape = new THREE.Shape();
+  shape.moveTo(-outerHalfWidth, bottom);
+  shape.lineTo(outerHalfWidth, bottom);
+  shape.lineTo(outerHalfWidth, top);
+  shape.lineTo(-outerHalfWidth, top);
+  shape.closePath();
+
+  const hole = new THREE.Path();
+  const halfOpening = openingWidth * 0.5;
+  // Keep the hole microscopically inside the silhouette; triangulators cannot subtract a hole that touches the outer edge.
+  hole.moveTo(-halfOpening, bottom + 0.05);
+  hole.lineTo(-halfOpening, 0);
+  hole.absellipse(0, 0, halfOpening, openingHeight, Math.PI, 0, true, 0);
+  hole.lineTo(halfOpening, bottom + 0.05);
+  hole.closePath();
+  shape.holes.push(hole);
+  return shape;
+}
+
+const railMatrices = [];
+function buildBridge({ z, openingWidth, openingHeight, deckTop, span, depth }) {
+  const water = riverHeight(z);
+  const bottom = -5;
+  const shape = makeArchShape(span * 0.5, bottom, deckTop, openingWidth, openingHeight);
+  const geometry = new THREE.ExtrudeGeometry(shape, {
+    depth,
+    steps: 1,
+    bevelEnabled: false,
+    curveSegments: 28,
+  });
+  geometry.translate(0, water, -depth * 0.5);
+  geometry.computeVertexNormals();
+
+  const material = new THREE.MeshLambertMaterial({ color: 0x92897b, flatShading: true });
+  const bridge = new THREE.Mesh(geometry, material);
+  bridge.position.z = z;
+  bridge.name = `Stone bridge at ${Math.round(SETTINGS.routeStartZ - z)} metres`;
+  scene.add(bridge);
+
+  const halfSpan = span * 0.5;
+  const halfOpening = openingWidth * 0.5;
+  const minZ = z - depth * 0.5;
+  const maxZ = z + depth * 0.5;
+  bridgeSpecs.push({ water, bottom, deckTop, halfSpan, halfOpening, openingHeight, minZ, maxZ });
+
+  // Low stone parapets and regularly spaced posts give speed/scale cues without shadows.
+  for (const side of [-1, 1]) {
+    const railZ = z + side * (depth * 0.5 - 0.7);
+    const base = new THREE.Matrix4();
+    base.compose(
+      new THREE.Vector3(0, water + deckTop + 0.7, railZ),
+      new THREE.Quaternion(),
+      new THREE.Vector3(span, 1.4, 1.2)
+    );
+    railMatrices.push(base);
+    addCollider(-halfSpan, halfSpan, water + deckTop, water + deckTop + 1.4, railZ - 0.6, railZ + 0.6);
+    for (let x = -halfSpan + 4; x <= halfSpan - 4; x += 8) {
+      const post = new THREE.Matrix4();
+      post.compose(
+        new THREE.Vector3(x, water + deckTop + 2.1, z + side * (depth * 0.5 - 0.7)),
+        new THREE.Quaternion(),
+        new THREE.Vector3(1.15, 4.2, 1.15)
+      );
+      railMatrices.push(post);
+      addCollider(x - 0.575, x + 0.575, water + deckTop, water + deckTop + 4.2, railZ - 0.575, railZ + 0.575);
+    }
+  }
+}
+
+function finishBridgeDetails() {
+  const geometry = new THREE.BoxGeometry(1, 1, 1);
+  const material = new THREE.MeshLambertMaterial({ color: 0x746c61, flatShading: true });
+  const mesh = new THREE.InstancedMesh(geometry, material, railMatrices.length);
+  railMatrices.forEach((matrix, index) => mesh.setMatrixAt(index, matrix));
+  mesh.instanceMatrix.needsUpdate = true;
   scene.add(mesh);
-  if (collider) colliders.push(new THREE.Box3().setFromObject(mesh));
+}
+
+function buildStartLedge() {
+  const geometry = new THREE.DodecahedronGeometry(1, 1);
+  geometry.scale(48, 9, 30);
+  const material = new THREE.MeshLambertMaterial({ color: 0x6f6b63, flatShading: true });
+  const ledge = new THREE.Mesh(geometry, material);
+  ledge.position.set(0, terrainHeight(0, SETTINGS.routeStartZ) + 236, SETTINGS.routeStartZ + 22);
+  ledge.name = 'Starting ledge';
+  scene.add(ledge);
+}
+
+function buildScenery() {
+  const random = seededRandom();
+  const treeCount = 150;
+  const rockCount = 120;
+  const trunkGeometry = new THREE.CylinderGeometry(0.55, 0.8, 6, 5);
+  const crownGeometry = new THREE.ConeGeometry(3.4, 11, 6);
+  const rockGeometry = new THREE.IcosahedronGeometry(1, 0);
+  const trunks = new THREE.InstancedMesh(trunkGeometry, new THREE.MeshLambertMaterial({ color: 0x4b3c30 }), treeCount);
+  const crowns = new THREE.InstancedMesh(crownGeometry, new THREE.MeshLambertMaterial({ color: 0x334f3b, flatShading: true }), treeCount);
+  const rocks = new THREE.InstancedMesh(rockGeometry, new THREE.MeshLambertMaterial({ color: 0x696863, flatShading: true }), rockCount);
+
+  for (let i = 0; i < treeCount; i += 1) {
+    const z = SETTINGS.routeStartZ - 100 - random() * 3800;
+    const side = random() < 0.5 ? -1 : 1;
+    const x = side * (105 + random() * 145);
+    const ground = terrainHeight(x, z);
+    const scale = 0.75 + random() * 1.2;
+    temp.position.set(x, ground + 3 * scale, z);
+    temp.quaternion.identity();
+    temp.scale.set(scale, scale, scale);
+    temp.matrix.compose(temp.position, temp.quaternion, temp.scale);
+    trunks.setMatrixAt(i, temp.matrix);
+    temp.position.y = ground + 10 * scale;
+    temp.matrix.compose(temp.position, temp.quaternion, temp.scale);
+    crowns.setMatrixAt(i, temp.matrix);
+  }
+
+  for (let i = 0; i < rockCount; i += 1) {
+    const z = SETTINGS.routeStartZ - 50 - random() * 3900;
+    const side = random() < 0.5 ? -1 : 1;
+    const x = side * (90 + random() * 195);
+    const scale = 1.8 + random() * 6.5;
+    temp.position.set(x, terrainHeight(x, z) + scale * 0.32, z);
+    temp.quaternion.setFromEuler(new THREE.Euler(random() * 1.2, random() * Math.PI, random() * 1.2));
+    temp.scale.set(scale * (0.75 + random() * 0.5), scale * (0.55 + random() * 0.5), scale * (0.75 + random() * 0.5));
+    temp.matrix.compose(temp.position, temp.quaternion, temp.scale);
+    rocks.setMatrixAt(i, temp.matrix);
+  }
+
+  trunks.instanceMatrix.needsUpdate = true;
+  crowns.instanceMatrix.needsUpdate = true;
+  rocks.instanceMatrix.needsUpdate = true;
+  scene.add(trunks, crowns, rocks);
+}
+
+function buildSky() {
+  const material = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    uniforms: {
+      uTop: { value: new THREE.Color(0x5f94ae) },
+      uHorizon: { value: new THREE.Color(0xdde8df) },
+      uLow: { value: new THREE.Color(0x8ba3a2) },
+    },
+    vertexShader: `
+      varying vec3 vDirection;
+      void main() {
+        vDirection = normalize(position);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 uTop;
+      uniform vec3 uHorizon;
+      uniform vec3 uLow;
+      varying vec3 vDirection;
+      void main() {
+        float h = clamp(vDirection.y * 0.5 + 0.5, 0.0, 1.0);
+        vec3 color = h < 0.5 ? mix(uLow, uHorizon, h * 2.0) : mix(uHorizon, uTop, (h - 0.5) * 2.0);
+        gl_FragColor = vec4(color, 1.0);
+      }
+    `,
+  });
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(1100, 24, 14), material);
+  sky.renderOrder = -1000;
+  sky.frustumCulled = false;
+  scene.add(sky);
+  return sky;
+}
+
+function buildWingtips() {
+  const positions = new Float32Array([
+    -0.58, -0.32, -1.65,  -1.82, -0.61, -2.72,  -0.90, -0.08, -2.38,
+     0.58, -0.32, -1.65,   0.90, -0.08, -2.38,   1.82, -0.61, -2.72,
+  ]);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setIndex([0, 1, 2, 3, 4, 5]);
+  geometry.computeVertexNormals();
+  const material = new THREE.MeshBasicMaterial({ color: 0xd98552, side: THREE.DoubleSide, depthTest: false, depthWrite: false });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.renderOrder = 1000;
+  mesh.frustumCulled = false;
+  mesh.visible = false;
+  camera.add(mesh);
   return mesh;
 }
 
-function makeBridge(z = -760) {
-  const floor = floorHeight(0, z);
-  const stone = 0x8f8778;
-  addBox(0, floor + 31, z, 150, 7, 15, stone, true);
-  addBox(-62, floor + 16, z, 18, 31, 17, stone, true);
-  addBox(62, floor + 16, z, 18, 31, 17, stone, true);
-  addBox(-31, floor + 27, z, 44, 8, 17, stone, true);
-  addBox(31, floor + 27, z, 44, 8, 17, stone, true);
-
-  for (let i = -5; i <= 5; i++) addBox(i * 13, floor + 37, z, 3, 6, 16, 0x6f685d, false);
-  return { z, openingTop: floor + 23 };
-}
-
-function makeSecondBridge(z = -2050) {
-  const floor = floorHeight(0, z);
-  const wood = 0x6d4c32;
-  addBox(0, floor + 17, z, 120, 4, 10, wood, true);
-  addBox(-52, floor + 9, z, 6, 18, 7, wood, true);
-  addBox(52, floor + 9, z, 6, 18, 7, wood, true);
-  for (let i = -4; i <= 4; i++) addBox(i * 13, floor + 20, z, 2, 7, 10, 0x8a6746, false);
-}
-
-function makeRocksAndTrees() {
-  const rockMat = new THREE.MeshStandardMaterial({ color: 0x66665f, roughness: 1, flatShading: true });
-  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x493b2f, roughness: 1 });
-  const treeMat = new THREE.MeshStandardMaterial({ color: 0x324b34, roughness: 1, flatShading: true });
-  const rockGeo = new THREE.IcosahedronGeometry(1, 1);
-  const trunkGeo = new THREE.CylinderGeometry(.8, 1.2, 7, 5);
-  const crownGeo = new THREE.ConeGeometry(4.2, 13, 7);
-
-  const rocks = new THREE.InstancedMesh(rockGeo, rockMat, 240);
-  const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, 420);
-  const crowns = new THREE.InstancedMesh(crownGeo, treeMat, 420);
-  const m = new THREE.Matrix4();
-  const q = new THREE.Quaternion();
-  const s = new THREE.Vector3();
-  const p = new THREE.Vector3();
-
-  for (let i = 0; i < 240; i++) {
-    const z = 80 - Math.random() * (WORLD_LENGTH - 240);
-    const side = Math.random() < .5 ? -1 : 1;
-    const x = side * (75 + Math.random() * 300);
-    const scale = 2 + Math.random() * 8;
-    p.set(x, floorHeight(x, z) + scale * .35, z);
-    q.setFromEuler(new THREE.Euler(Math.random(), Math.random(), Math.random()));
-    s.set(scale * (0.7 + Math.random()), scale * (0.5 + Math.random()), scale * (0.7 + Math.random()));
-    m.compose(p, q, s);
-    rocks.setMatrixAt(i, m);
-  }
-
-  for (let i = 0; i < 420; i++) {
-    const z = 70 - Math.random() * (WORLD_LENGTH - 220);
-    const side = Math.random() < .5 ? -1 : 1;
-    const x = side * (105 + Math.random() * 220);
-    const base = floorHeight(x, z);
-    const scale = .7 + Math.random() * 1.5;
-    p.set(x, base + 3.5 * scale, z);
-    q.identity();
-    s.set(scale, scale, scale);
-    m.compose(p, q, s);
-    trunks.setMatrixAt(i, m);
-    p.set(x, base + 11 * scale, z);
-    m.compose(p, q, s);
-    crowns.setMatrixAt(i, m);
-  }
-
-  rocks.instanceMatrix.needsUpdate = true;
-  trunks.instanceMatrix.needsUpdate = true;
-  crowns.instanceMatrix.needsUpdate = true;
-  scene.add(rocks, trunks, crowns);
-}
-
-function makeClouds() {
-  const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .26, depthWrite: false });
-  const geo = new THREE.SphereGeometry(1, 10, 6);
-  for (let i = 0; i < 55; i++) {
-    const cloud = new THREE.Mesh(geo, mat);
-    const z = -Math.random() * WORLD_LENGTH;
-    const x = (Math.random() - .5) * 650;
-    const y = 125 + Math.random() * 150;
-    cloud.position.set(x, y, z);
-    cloud.scale.set(25 + Math.random() * 45, 8 + Math.random() * 14, 20 + Math.random() * 50);
-    scene.add(cloud);
-  }
-}
-
-function makeGates() {
-  const mat = new THREE.MeshBasicMaterial({ color: 0xf0b55d, transparent: true, opacity: .7, side: THREE.DoubleSide });
-  const positions = [-1120, -2550, -4100, -5600];
-  for (const z of positions) {
-    const y = floorHeight(0, z) + 42;
-    const gate = new THREE.Mesh(new THREE.TorusGeometry(18, .65, 8, 40), mat);
-    gate.position.set(0, y, z);
-    scene.add(gate);
-    gate.userData.checkpoint = true;
-  }
-}
-
-function makePilot() {
-  const group = new THREE.Group();
-  const suit = new THREE.MeshStandardMaterial({ color: 0xd8744f, roughness: .78, flatShading: true });
-  const dark = new THREE.MeshStandardMaterial({ color: 0x26333a, roughness: .8, flatShading: true });
-
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(1.2, 3.2, 3, 7), suit);
-  torso.rotation.x = Math.PI / 2;
-  group.add(torso);
-
-  const head = new THREE.Mesh(new THREE.SphereGeometry(1.15, 10, 8), dark);
-  head.position.z = -3;
-  group.add(head);
-
-  const wing = new THREE.Mesh(new THREE.BufferGeometry().setFromPoints([
-    new THREE.Vector3(-6.5, 0, -1), new THREE.Vector3(0, 0, 1.4), new THREE.Vector3(6.5, 0, -1)
-  ]), suit);
-  wing.geometry.setIndex([0, 1, 2]);
-  wing.geometry.computeVertexNormals();
-  wing.material.side = THREE.DoubleSide;
-  group.add(wing);
-
-  const legGeo = new THREE.CapsuleGeometry(.5, 3, 2, 6);
-  for (const x of [-.8, .8]) {
-    const leg = new THREE.Mesh(legGeo, suit);
-    leg.rotation.x = Math.PI / 2;
-    leg.rotation.z = x < 0 ? -.12 : .12;
-    leg.position.set(x, -.15, 3.2);
-    group.add(leg);
-  }
-  group.scale.setScalar(.72);
-  scene.add(group);
-  return group;
-}
-
-makeTerrain();
-const river = makeRiver();
-makeBridge();
-makeSecondBridge();
-makeRocksAndTrees();
-makeClouds();
-makeGates();
-const pilot = makePilot();
-
-function deviceQuaternion(alpha, beta, gamma, orient) {
-  const euler = new THREE.Euler(beta, alpha, -gamma, 'YXZ');
-  const q = new THREE.Quaternion().setFromEuler(euler);
-  const q1 = new THREE.Quaternion(-Math.sqrt(.5), 0, 0, Math.sqrt(.5));
-  const q0 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -orient);
-  return q.multiply(q1).multiply(q0);
-}
-
-function onDeviceOrientation(event) {
-  if (event.alpha == null) return;
-  const orient = THREE.MathUtils.degToRad(screen.orientation?.angle || window.orientation || 0);
-  const q = deviceQuaternion(
-    THREE.MathUtils.degToRad(event.alpha || 0),
-    THREE.MathUtils.degToRad(event.beta || 0),
-    THREE.MathUtils.degToRad(event.gamma || 0),
-    orient
+function buildUpdraft() {
+  const baseY = riverHeight(SETTINGS.updraftZ);
+  const column = new THREE.Mesh(
+    new THREE.CylinderGeometry(SETTINGS.updraftRadius, SETTINGS.updraftRadius * 0.72, 285, 28, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xd9f6d2, transparent: true, opacity: 0.11, side: THREE.DoubleSide, depthWrite: false })
   );
-  const e = new THREE.Euler().setFromQuaternion(q, 'YXZ');
-  input.rawPitch = e.x;
-  input.rawRoll = e.z;
-  input.deviceReady = true;
-}
+  column.position.set(0, baseY + 142, SETTINGS.updraftZ);
+  column.name = 'Updraft loop';
+  scene.add(column);
 
-async function enableDeviceOrientation() {
-  try {
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-      const result = await DeviceOrientationEvent.requestPermission();
-      if (result !== 'granted') throw new Error('Motion permission was not granted.');
-    }
-    window.addEventListener('deviceorientation', onDeviceOrientation, true);
-    await new Promise(resolve => setTimeout(resolve, 220));
-    recenter();
-    return true;
-  } catch (error) {
-    showMessage(error.message || 'Could not start head tracking.', 3200);
-    return false;
+  const random = seededRandom(90210);
+  const count = 160;
+  const positions = new Float32Array(count * 3);
+  const bases = new Float32Array(count);
+  for (let i = 0; i < count; i += 1) {
+    const angle = random() * Math.PI * 2;
+    const radius = Math.sqrt(random()) * SETTINGS.updraftRadius * 0.88;
+    positions[i * 3] = Math.cos(angle) * radius;
+    positions[i * 3 + 1] = random() * 280;
+    positions[i * 3 + 2] = Math.sin(angle) * radius;
+    bases[i] = positions[i * 3 + 1];
   }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const points = new THREE.Points(
+    geometry,
+    new THREE.PointsMaterial({ color: 0xf2ffd8, size: 1.5, transparent: true, opacity: 0.68, depthWrite: false, sizeAttenuation: true })
+  );
+  points.position.set(0, baseY, SETTINGS.updraftZ);
+  scene.add(points);
+  return { column, points, bases };
 }
 
-function recenter() {
-  input.baselinePitch = input.rawPitch;
-  input.baselineRoll = input.rawRoll;
-  showMessage('Centered', 650);
+buildTerrain();
+const river = buildRiver();
+buildBridge({ z: SETTINGS.bridge1Z, openingWidth: 25, openingHeight: 14, deckTop: 18, span: 94, depth: 14 });
+buildBridge({ z: SETTINGS.bridge2Z, openingWidth: 18, openingHeight: 10, deckTop: 12, span: 78, depth: 12 });
+finishBridgeDetails();
+buildStartLedge();
+buildScenery();
+const sky = buildSky();
+const wingtips = buildWingtips();
+const updraft = buildUpdraft();
+
+function setEyeMessage(text = '') {
+  eyeLeft.textContent = text;
+  eyeRight.textContent = text;
+  eyeMessage.classList.toggle('hidden', !text);
 }
 
-function setStereo(value) {
-  stereo = value;
-  document.body.classList.toggle('stereo', stereo);
-  vrButton.textContent = `Stereo: ${stereo ? 'on' : 'off'}`;
+function showToast(text, duration = 0.65) {
+  state.toast = text;
+  state.toastUntil = performance.now() / 1000 + duration;
+}
+
+function setStartStatus(text, error = false) {
+  startStatus.textContent = text;
+  startStatus.classList.toggle('error', error);
+}
+
+function setStereo(enabled) {
+  state.stereo = enabled;
+  document.body.classList.toggle('stereo', enabled);
   resize();
 }
 
-async function requestFullscreen() {
-  const el = document.documentElement;
-  try {
-    if (el.requestFullscreen) await el.requestFullscreen({ navigationUI: 'hide' });
-    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
-  } catch (_) {}
-}
-
-async function start({ phone = false } = {}) {
-  phoneMode = phone;
-  if (phoneMode) {
-    if (innerHeight > innerWidth) {
-      rotateEl.classList.remove('hidden');
-      setTimeout(() => rotateEl.classList.add('hidden'), 2400);
-    }
-    const allowed = await enableDeviceOrientation();
-    if (!allowed) phoneMode = false;
-    await requestFullscreen();
-    setStereo(true);
-  }
-
-  document.body.classList.add('running');
-  startPanel.classList.add('hidden');
-  hud.classList.remove('hidden');
-  controls.classList.remove('hidden');
-  running = true;
-  resetFlight();
-  clock.start();
+function setFlightQuaternion() {
+  temp.qYaw.setFromAxisAngle(UP, flight.heading);
+  temp.qPitch.setFromAxisAngle(RIGHT, flight.pitch);
+  temp.qRoll.setFromAxisAngle(FORWARD, flight.bank);
+  flight.quaternion.copy(temp.qYaw).multiply(temp.qPitch).multiply(temp.qRoll).normalize();
 }
 
 function resetFlight() {
-  const spawnZ = checkpointZ;
-  flight.position.set(0, floorHeight(0, spawnZ) + (spawnZ === 120 ? 165 : 58), spawnZ);
-  flight.speed = spawnZ === 120 ? 42 : 48;
-  flight.pitch = -.08;
-  flight.roll = 0;
-  flight.yaw = 0;
-  crashed = false;
-  distanceTravelled = Math.max(0, 120 - spawnZ);
-  messageEl.classList.add('hidden');
+  const ground = terrainHeight(0, SETTINGS.routeStartZ);
+  flight.position.set(0, ground + SETTINGS.spawnAltitude, SETTINGS.routeStartZ);
+  flight.speed = SETTINGS.spawnSpeed;
+  flight.pitch = SETTINGS.trimPitch;
+  flight.bank = 0;
+  flight.heading = 0;
+  state.updraftActive = false;
+  state.updraftElapsed = 0;
+  setFlightQuaternion();
+  camera.position.copy(flight.position);
+  camera.quaternion.copy(flight.quaternion);
 }
 
-function crash(reason = 'Impact') {
-  if (crashed) return;
-  crashed = true;
-  showMessage(`${reason} — restarting`, 1200);
-  setTimeout(resetFlight, 1150);
+function screenTilt(betaDegrees, gammaDegrees) {
+  const beta = betaDegrees * DEG;
+  const gamma = gammaDegrees * DEG;
+  const cosBeta = Math.cos(beta);
+
+  // World-up in the device's natural coordinates. Alpha mathematically cancels and is never read.
+  const gravityX = -cosBeta * Math.sin(gamma);
+  const gravityY = Math.sin(beta);
+  const gravityZ = cosBeta * Math.cos(gamma);
+
+  const screenDegrees = screen.orientation?.angle ?? window.orientation ?? 0;
+  const angle = ((screenDegrees % 360) + 360) % 360 * DEG;
+  const cosine = Math.cos(angle);
+  const sine = Math.sin(angle);
+  const screenX = cosine * gravityX - sine * gravityY;
+  const screenY = sine * gravityX + cosine * gravityY;
+
+  return {
+    pitchDown: Math.atan2(gravityZ, Math.hypot(screenX, screenY)),
+    rollRight: Math.atan2(-screenX, screenY),
+  };
 }
 
-function showMessage(text, duration = 1000) {
-  messageEl.textContent = text;
-  messageEl.classList.remove('hidden');
-  clearTimeout(showMessage.timer);
-  showMessage.timer = setTimeout(() => messageEl.classList.add('hidden'), duration);
+function onDeviceOrientation(event) {
+  if (!Number.isFinite(event.beta) || !Number.isFinite(event.gamma)) return;
+  const tilt = screenTilt(event.beta, event.gamma);
+  if (!Number.isFinite(tilt.pitchDown) || !Number.isFinite(tilt.rollRight)) return;
+
+  const now = performance.now() / 1000;
+  sensor.latestPitchDown = tilt.pitchDown;
+  sensor.latestRollRight = tilt.rollRight;
+  sensor.lastSampleTime = now;
+  sensor.valid = true;
+  sensor.samples.push({ pitch: tilt.pitchDown, roll: tilt.rollRight, time: now });
+  while (sensor.samples.length > 32 || (sensor.samples[0] && now - sensor.samples[0].time > 0.5)) sensor.samples.shift();
+  if (sensor.waiter) {
+    sensor.waiter();
+    sensor.waiter = null;
+  }
 }
 
-function updateInput(dt) {
-  let pitchInput = 0;
-  let rollInput = 0;
+function listenForOrientation() {
+  if (sensor.listening) return;
+  window.addEventListener('deviceorientation', onDeviceOrientation, true);
+  sensor.listening = true;
+}
 
-  if (phoneMode && input.deviceReady) {
-    pitchInput = THREE.MathUtils.clamp((input.rawPitch - input.baselinePitch) * 1.25, -.75, .75);
-    rollInput = THREE.MathUtils.clamp((input.rawRoll - input.baselineRoll) * -1.6, -1, 1);
+function waitForFreshSensorSample(timeout = 1800) {
+  sensor.valid = false;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      if (sensor.waiter) sensor.waiter = null;
+      reject(new Error('No head-tracking signal arrived. Check Safari motion access and try again.'));
+    }, timeout);
+    sensor.waiter = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+  });
+}
+
+function circularAverage(values) {
+  if (!values.length) return 0;
+  let x = 0;
+  let y = 0;
+  for (const value of values) {
+    x += Math.cos(value);
+    y += Math.sin(value);
+  }
+  return Math.atan2(y, x);
+}
+
+function recenter(showConfirmation = true) {
+  const now = performance.now() / 1000;
+  const recent = sensor.samples.filter(sample => now - sample.time <= 0.25);
+  sensor.baselinePitchDown = circularAverage(recent.map(sample => sample.pitch));
+  sensor.baselineRollRight = circularAverage(recent.map(sample => sample.roll));
+  if (!recent.length) {
+    sensor.baselinePitchDown = sensor.latestPitchDown;
+    sensor.baselineRollRight = sensor.latestRollRight;
+  }
+  sensor.calibrated = sensor.valid;
+  if (showConfirmation && sensor.calibrated) showToast('CENTERED');
+}
+
+function isLandscape() {
+  return window.innerWidth >= window.innerHeight;
+}
+
+function waitForLandscape() {
+  if (isLandscape()) return Promise.resolve();
+  orientationWarning.classList.remove('hidden');
+  return new Promise(resolve => {
+    const check = () => {
+      if (!isLandscape()) return;
+      window.removeEventListener('resize', check);
+      window.removeEventListener('orientationchange', check);
+      orientationWarning.classList.add('hidden');
+      resolve();
+    };
+    window.addEventListener('resize', check);
+    window.addEventListener('orientationchange', check);
+  });
+}
+
+async function acquireWakeLock() {
+  if (!state.phone || !('wakeLock' in navigator) || document.visibilityState !== 'visible') return;
+  try {
+    state.wakeLock = await navigator.wakeLock.request('screen');
+    state.wakeLock.addEventListener('release', () => { state.wakeLock = null; });
+  } catch (_) {
+    state.wakeLock = null;
+  }
+}
+
+function beginSession({ phone, mouseOrigin = null }) {
+  state.phone = phone;
+  // Treat the desktop Start click as neutral, then measure deliberate movement away from it.
+  if (!phone) {
+    input.mouseX = 0;
+    input.mouseY = 0;
+    input.mouseOriginX = mouseOrigin?.x ?? window.innerWidth * 0.5;
+    input.mouseOriginY = mouseOrigin?.y ?? window.innerHeight * 0.5;
+    input.keyPitch = 0;
+    input.keyRoll = 0;
+  }
+  state.phase = phone ? 'calibrating' : 'flying';
+  state.phaseStarted = performance.now() / 1000;
+  document.body.classList.add('running');
+  document.body.classList.toggle('phone', phone);
+  startPanel.classList.add('hidden');
+  wingtips.visible = true;
+  setStereo(phone);
+  resetFlight();
+  if (phone) void acquireWakeLock();
+}
+
+async function beginPhone(permissionPromise) {
+  phoneStart.disabled = true;
+  desktopStart.disabled = true;
+  setStartStatus('Waiting for motion permission…');
+  try {
+    if (!window.isSecureContext) throw new Error('Phone VR needs the secure GitHub Pages link (https://).');
+    const permission = await permissionPromise;
+    if (permission !== 'granted') throw new Error('Motion access was not granted. Tap Start and choose Allow.');
+
+    listenForOrientation();
+    setStartStatus('Rotate the phone to landscape.');
+    await waitForLandscape();
+    setStartStatus('Reading head movement…');
+    await waitForFreshSensorSample();
+    sensor.samples.length = 0;
+    beginSession({ phone: true });
+  } catch (error) {
+    setStartStatus(error.message || 'Head tracking could not start.', true);
+    phoneStart.disabled = false;
+    desktopStart.disabled = false;
+    orientationWarning.classList.add('hidden');
+  }
+}
+
+phoneStart.addEventListener('click', () => {
+  // iOS only permits this request when it is invoked directly by the user's tap.
+  const OrientationEvent = globalThis.DeviceOrientationEvent;
+  let permissionPromise;
+  try {
+    permissionPromise = OrientationEvent && typeof OrientationEvent.requestPermission === 'function'
+      ? OrientationEvent.requestPermission()
+      : Promise.resolve(OrientationEvent ? 'granted' : 'unavailable');
+  } catch (error) {
+    permissionPromise = Promise.reject(error);
+  }
+  void beginPhone(permissionPromise);
+});
+
+desktopStart.addEventListener('click', event => beginSession({
+  phone: false,
+  mouseOrigin: { x: event.clientX, y: event.clientY },
+}));
+
+function controlTargets() {
+  let pitchInput;
+  let rollInput;
+  if (state.phone) {
+    const pitchDelta = wrapPi(sensor.latestPitchDown - sensor.baselinePitchDown);
+    const rollDelta = wrapPi(sensor.latestRollRight - sensor.baselineRollRight);
+    pitchInput = -signedDeadzone(pitchDelta, SETTINGS.pitchDeadzone, SETTINGS.fullHeadPitch);
+    rollInput = signedDeadzone(rollDelta, SETTINGS.rollDeadzone, SETTINGS.fullHeadRoll);
   } else {
-    pitchInput = -input.mouseY * .48 + input.keyPitch * .45;
-    rollInput = input.mouseX * .72 + input.keyRoll * .72;
+    pitchInput = clamp(-input.mouseY + input.keyPitch, -1, 1);
+    rollInput = clamp(input.mouseX + input.keyRoll, -1, 1);
   }
 
-  flight.pitchTarget = THREE.MathUtils.clamp(pitchInput - .055, -.68, .48);
-  flight.rollTarget = THREE.MathUtils.clamp(rollInput, -.9, .9);
-  flight.pitch = THREE.MathUtils.damp(flight.pitch, flight.pitchTarget, 3.8, dt);
-  flight.roll = THREE.MathUtils.damp(flight.roll, flight.rollTarget, 4.6, dt);
-
-  const turnRate = Math.sin(flight.roll) * (0.52 + flight.speed * .004);
-  flight.yaw += turnRate * dt;
+  let pitchTarget = pitchInput >= 0
+    ? THREE.MathUtils.lerp(SETTINGS.trimPitch, SETTINGS.maxPitch, pitchInput)
+    : THREE.MathUtils.lerp(SETTINGS.trimPitch, -SETTINGS.maxPitch, -pitchInput);
+  if (pitchTarget > SETTINGS.trimPitch) {
+    const climbAuthority = smoothstep(SETTINGS.minSpeed, SETTINGS.cruiseSpeed * 0.93, flight.speed);
+    pitchTarget = SETTINGS.trimPitch + (pitchTarget - SETTINGS.trimPitch) * climbAuthority;
+  }
+  return {
+    pitch: pitchTarget,
+    bank: rollInput * SETTINGS.maxBank,
+  };
 }
 
-function updateFlight(dt) {
-  if (crashed) return;
-  updateInput(dt);
+function beginCrash() {
+  if (state.phase !== 'flying') return;
+  state.phase = 'crashing';
+  state.phaseStarted = performance.now() / 1000;
+  state.updraftActive = false;
+  state.toast = '';
+}
 
-  const diveAcceleration = -Math.sin(flight.pitch) * 24;
-  const speedDrag = (flight.speed - 43) * .075;
-  flight.speed = THREE.MathUtils.clamp(flight.speed + (diveAcceleration - speedDrag) * dt, 22, 118);
+function beginLoop() {
+  if (state.phase !== 'flying') return;
+  state.phase = 'looping';
+  state.phaseStarted = performance.now() / 1000;
+  state.loopResetDone = false;
+  state.updraftActive = false;
+}
 
-  temp.qYaw.setFromAxisAngle(UP, flight.yaw);
-  temp.qPitch.setFromAxisAngle(new THREE.Vector3(1, 0, 0), flight.pitch - .045);
-  temp.qRoll.setFromAxisAngle(new THREE.Vector3(0, 0, -1), flight.roll);
-  temp.q.copy(temp.qYaw).multiply(temp.qPitch).multiply(temp.qRoll);
-
-  temp.forward.copy(FORWARD).applyQuaternion(temp.q).normalize();
-  const move = temp.forward.multiplyScalar(flight.speed * dt);
-  flight.position.add(move);
-  distanceTravelled = Math.max(distanceTravelled, 120 - flight.position.z);
-
-  if (Math.abs(flight.position.x) > WORLD_HALF_WIDTH - 8) crash('Left the valley');
-  if (flight.position.z < -WORLD_LENGTH + 80) {
-    checkpointZ = 120;
-    showMessage('Valley complete', 1700);
-    setTimeout(resetFlight, 1600);
-  }
-
-  const ground = floorHeight(flight.position.x, flight.position.z);
-  if (flight.position.y < ground + 1.6) crash('Terrain impact');
-
-  const pilotBox = new THREE.Box3(
-    flight.position.clone().add(new THREE.Vector3(-1.7, -1.2, -2.5)),
-    flight.position.clone().add(new THREE.Vector3(1.7, 1.2, 2.5))
+function updatePlayerBox() {
+  temp.playerMin.set(
+    flight.position.x - SETTINGS.playerHalfX,
+    flight.position.y - SETTINGS.playerHalfY,
+    flight.position.z - SETTINGS.playerHalfZ
   );
-  for (const box of colliders) {
-    if (pilotBox.intersectsBox(box)) {
-      crash('Bridge impact');
-      break;
-    }
-  }
-
-  const checkpointPositions = [-1120, -2550, -4100, -5600];
-  for (const z of checkpointPositions) {
-    if (flight.position.z < z && checkpointZ > z) {
-      checkpointZ = z + 70;
-      showMessage('Checkpoint', 700);
-    }
-  }
+  temp.playerMax.set(
+    flight.position.x + SETTINGS.playerHalfX,
+    flight.position.y + SETTINGS.playerHalfY,
+    flight.position.z + SETTINGS.playerHalfZ
+  );
+  temp.playerBox.min.copy(temp.playerMin);
+  temp.playerBox.max.copy(temp.playerMax);
 }
 
-function updatePilot() {
-  pilot.position.copy(flight.position);
-  pilot.quaternion.copy(temp.q);
-  pilot.visible = cameraMode === 'chase';
+function detectCollision() {
+  const ground = terrainHeight(flight.position.x, flight.position.z);
+  if (flight.position.y - SETTINGS.playerHalfY <= ground) return true;
+
+  if (
+    Math.abs(flight.position.x) <= SETTINGS.riverHalfWidth &&
+    flight.position.y - SETTINGS.playerHalfY <= riverHeight(flight.position.z)
+  ) return true;
+
+  if (Math.abs(flight.position.x) >= SETTINGS.halfWidth - 2) return true;
+  if (flight.position.z <= SETTINGS.routeEndZ - 30 || flight.position.z >= SETTINGS.routeStartZ + 260) return true;
+
+  updatePlayerBox();
+  for (const bridge of bridgeSpecs) {
+    const box = temp.playerBox;
+    if (
+      box.max.z < bridge.minZ || box.min.z > bridge.maxZ ||
+      box.max.x < -bridge.halfSpan || box.min.x > bridge.halfSpan ||
+      box.max.y < bridge.water + bridge.bottom || box.min.y > bridge.water + bridge.deckTop
+    ) continue;
+
+    // The player is safe only while its whole collision box fits inside the rendered arch opening.
+    const widestX = Math.max(Math.abs(box.min.x), Math.abs(box.max.x));
+    const insideWidth = box.min.x > -bridge.halfOpening && box.max.x < bridge.halfOpening;
+    const archRoof = insideWidth
+      ? bridge.openingHeight * Math.sqrt(Math.max(0, 1 - (widestX / bridge.halfOpening) ** 2))
+      : -Infinity;
+    const insideOpening =
+      insideWidth &&
+      box.min.y > bridge.water + bridge.bottom + 0.05 &&
+      box.max.y < bridge.water + archRoof;
+    if (!insideOpening) return true;
+  }
+  for (const collider of bridgeColliders) {
+    if (temp.playerBox.intersectsBox(collider)) return true;
+  }
+  return false;
 }
 
-function updateCamera(dt) {
-  temp.right.set(1, 0, 0).applyQuaternion(temp.q).normalize();
-  temp.up.set(0, 1, 0).applyQuaternion(temp.q).normalize();
-  const flightForward = FORWARD.clone().applyQuaternion(temp.q).normalize();
+function updatePhysics(dt) {
+  if (state.phase !== 'flying') return;
 
-  if (cameraMode === 'first') {
-    temp.targetCamera.copy(flight.position).addScaledVector(temp.up, .35).addScaledVector(flightForward, -1.1);
+  if (state.phone && (
+    !isLandscape() ||
+    !sensor.calibrated ||
+    performance.now() / 1000 - sensor.lastSampleTime > 0.8
+  )) {
+    sensor.calibrated = false;
+    state.phase = 'calibrating';
+    state.phaseStarted = performance.now() / 1000;
+    return;
+  }
+
+  const targets = controlTargets();
+  if (state.updraftActive) {
+    flight.pitch = moveToward(flight.pitch, 24 * DEG, 28 * DEG * dt);
+    flight.bank = moveToward(flight.bank, 0, SETTINGS.bankRate * dt);
   } else {
-    temp.targetCamera.copy(flight.position)
-      .addScaledVector(flightForward, -12)
-      .addScaledVector(temp.up, 4.4);
+    flight.pitch = moveToward(flight.pitch, targets.pitch, SETTINGS.pitchRate * dt);
+    flight.bank = moveToward(flight.bank, targets.bank, SETTINGS.bankRate * dt);
   }
 
-  cameraRig.position.lerp(temp.targetCamera, 1 - Math.exp(-dt * 7));
-  temp.lookTarget.copy(flight.position).addScaledVector(flightForward, cameraMode === 'first' ? 75 : 18);
-  const targetMatrix = new THREE.Matrix4().lookAt(cameraRig.position, temp.lookTarget, UP);
-  const targetQuat = new THREE.Quaternion().setFromRotationMatrix(targetMatrix);
-  cameraRig.quaternion.slerp(targetQuat, 1 - Math.exp(-dt * 9));
+  const speedRatio = clamp(flight.speed / SETTINGS.cruiseSpeed, 0.6, 1.65);
+  const yawRate = 32 * DEG * (flight.bank / SETTINGS.maxBank) * speedRatio;
+  flight.heading -= yawRate * dt;
+
+  const overspeed = Math.max(0, flight.speed - 55.556);
+  const acceleration =
+    -9.81 * Math.sin(flight.pitch) +
+    0.8541 -
+    0.00177224 * flight.speed * flight.speed -
+    0.03 * overspeed * overspeed;
+  flight.speed = clamp(flight.speed + acceleration * dt, SETTINGS.minSpeed, SETTINGS.maxSpeed);
+
+  setFlightQuaternion();
+  temp.forward.copy(FORWARD).applyQuaternion(flight.quaternion).normalize();
+  flight.position.addScaledVector(temp.forward, flight.speed * dt);
+
+  // Water, terrain and stone remain fatal even on the exact frame the updraft is entered.
+  if (detectCollision()) {
+    beginCrash();
+    return;
+  }
+
+  const dx = flight.position.x;
+  const dz = flight.position.z - SETTINGS.updraftZ;
+  const distanceToUpdraft = Math.hypot(dx, dz);
+  const updraftBase = riverHeight(SETTINGS.updraftZ);
+  const loopTargetHeight = terrainHeight(0, SETTINGS.routeStartZ) + SETTINGS.spawnAltitude - 8;
+  const insideUpdraftHeight =
+    flight.position.y - SETTINGS.playerHalfY >= updraftBase &&
+    flight.position.y <= loopTargetHeight;
+  if (
+    !state.updraftActive &&
+    distanceToUpdraft < SETTINGS.updraftRadius &&
+    flight.position.z < SETTINGS.updraftZ + 40 &&
+    insideUpdraftHeight
+  ) {
+    state.updraftActive = true;
+    state.updraftElapsed = 0;
+  }
+
+  if (state.updraftActive) {
+    state.updraftElapsed += dt;
+    const capture = 1 - clamp(distanceToUpdraft / SETTINGS.updraftRadius, 0, 1);
+    flight.position.x += -flight.position.x * (0.48 + capture * 0.5) * dt;
+    flight.position.z += (SETTINGS.updraftZ - flight.position.z) * 0.32 * dt;
+    flight.position.y += (58 + capture * 18) * dt;
+    flight.speed = THREE.MathUtils.damp(flight.speed, SETTINGS.spawnSpeed, 0.8, dt);
+    if (flight.position.y >= loopTargetHeight || state.updraftElapsed > 4.4) beginLoop();
+  }
 }
 
-function animateWater(t) {
-  river.material.opacity = .83 + Math.sin(t * 1.7) * .04;
+function updatePhase(now) {
+  const elapsed = now - state.phaseStarted;
+  if (state.phase === 'calibrating') {
+    fade.style.opacity = '0';
+    if (!isLandscape()) {
+      state.phaseStarted = now;
+      orientationWarning.classList.remove('hidden');
+      setEyeMessage('ROTATE');
+      return;
+    }
+    if (!sensor.valid || now - sensor.lastSampleTime > 0.4) {
+      state.phaseStarted = now;
+      setEyeMessage('TRACKING…');
+      return;
+    }
+    orientationWarning.classList.add('hidden');
+    const count = Math.max(1, 3 - Math.floor(elapsed));
+    setEyeMessage(`LOOK STRAIGHT\n${count}`);
+    if (elapsed >= 3) {
+      recenter(false);
+      state.phase = 'flying';
+      state.phaseStarted = now;
+      setEyeMessage('');
+    }
+    return;
+  }
+
+  if (state.phase === 'crashing') {
+    setEyeMessage('');
+    if (elapsed < 0.3) fade.style.opacity = String(elapsed / 0.3);
+    else fade.style.opacity = '1';
+    if (elapsed >= 1.3) {
+      resetFlight();
+      state.phase = 'respawning';
+      state.phaseStarted = now;
+    }
+    return;
+  }
+
+  if (state.phase === 'respawning') {
+    fade.style.opacity = String(1 - clamp(elapsed / 0.45, 0, 1));
+    const count = Math.max(1, 3 - Math.floor(elapsed));
+    setEyeMessage(String(count));
+    if (elapsed >= 3) {
+      recenter(false);
+      state.phase = 'flying';
+      state.phaseStarted = now;
+      setEyeMessage('');
+      fade.style.opacity = '0';
+    }
+    return;
+  }
+
+  if (state.phase === 'looping') {
+    setEyeMessage('UPDRAFT');
+    fade.style.background = '#f3ffe9';
+    fade.style.opacity = String(clamp(elapsed / 0.5, 0, 1));
+    if (elapsed >= 0.55 && !state.loopResetDone) {
+      resetFlight();
+      state.loopResetDone = true;
+      state.phase = 'loopReturn';
+      state.phaseStarted = now;
+    }
+    return;
+  }
+
+  if (state.phase === 'loopReturn') {
+    fade.style.background = '#f3ffe9';
+    fade.style.opacity = String(1 - clamp(elapsed / 0.55, 0, 1));
+    if (elapsed >= 0.6) {
+      fade.style.background = '#fff';
+      fade.style.opacity = '0';
+      setEyeMessage('');
+      state.phase = 'flying';
+      state.phaseStarted = now;
+    }
+    return;
+  }
+
+  fade.style.opacity = '0';
+  if (state.toast && now < state.toastUntil) setEyeMessage(state.toast);
+  else {
+    state.toast = '';
+    setEyeMessage('');
+  }
 }
 
-function renderMono(width, height) {
-  camera.aspect = width / height;
-  camera.updateProjectionMatrix();
-  camera.position.set(0, 0, 0);
-  renderer.setViewport(0, 0, width, height);
-  renderer.setScissorTest(false);
-  renderer.render(scene, camera);
-}
-
-function renderStereo(width, height) {
-  const half = Math.floor(width / 2);
-  renderer.setScissorTest(true);
+function updateCamera() {
+  camera.position.copy(flight.position);
+  camera.quaternion.copy(flight.quaternion);
   camera.updateMatrixWorld(true);
-  camera.getWorldPosition(temp.cameraPosition);
-  camera.getWorldQuaternion(temp.cameraQuaternion);
-
-  for (let eye = 0; eye < 2; eye++) {
-    const sign = eye === 0 ? -1 : 1;
-    eyeCamera.fov = camera.fov;
-    eyeCamera.near = camera.near;
-    eyeCamera.far = camera.far;
-    eyeCamera.aspect = half / height;
-    eyeCamera.updateProjectionMatrix();
-    temp.eyeOffset.set(sign * .032, 0, 0).applyQuaternion(temp.cameraQuaternion);
-    eyeCamera.position.copy(temp.cameraPosition).add(temp.eyeOffset);
-    eyeCamera.quaternion.copy(temp.cameraQuaternion);
-    eyeCamera.updateMatrixWorld(true);
-
-    renderer.setViewport(eye * half, 0, half, height);
-    renderer.setScissor(eye * half, 0, half, height);
-    renderer.render(scene, eyeCamera);
-  }
-  renderer.setScissorTest(false);
 }
 
-function loop(now) {
-  requestAnimationFrame(loop);
-  const dt = Math.min(.033, Math.max(.001, (now - lastTime) / 1000));
-  lastTime = now;
-
-  if (running) {
-    updateFlight(dt);
-    updatePilot();
-    updateCamera(dt);
-    animateWater(now / 1000);
-
-    const ground = floorHeight(flight.position.x, flight.position.z);
-    speedEl.textContent = `${Math.round(flight.speed * 3.6)}`;
-    altitudeEl.textContent = `${Math.max(0, Math.round(flight.position.y - ground))}`;
-    distanceEl.textContent = `${(distanceTravelled / 1000).toFixed(1)}`;
-  } else {
-    cameraRig.position.set(0, 110, 215);
-    cameraRig.lookAt(0, 40, -360);
+function updateAtmosphere(now, frameDt) {
+  river.material.uniforms.uTime.value = now;
+  updraft.column.material.opacity = 0.09 + Math.sin(now * 2.1) * 0.025;
+  const positions = updraft.points.geometry.attributes.position;
+  for (let i = 0; i < positions.count; i += 1) {
+    positions.setY(i, (updraft.bases[i] + now * (18 + (i % 7) * 1.3)) % 280);
   }
+  positions.needsUpdate = true;
+  updraft.points.rotation.y = now * 0.035;
 
+  const vignetteTarget = smoothstep(SETTINGS.comfortSpeed, SETTINGS.maxSpeed, flight.speed) * 0.72;
+  const current = Number.parseFloat(vignette.style.opacity || '0') || 0;
+  vignette.style.opacity = String(THREE.MathUtils.damp(current, state.phase === 'menu' ? 0 : vignetteTarget, 8, frameDt));
+
+  sky.position.copy(camera.position);
+}
+
+function renderMenu(now) {
+  const drift = Math.sin(now * 0.12);
+  camera.position.set(88 + drift * 16, 112 + Math.sin(now * 0.17) * 5, 185);
+  temp.look.set(0, 44, -500);
+  camera.lookAt(temp.look);
+  camera.updateMatrixWorld(true);
+}
+
+function renderScene() {
   const width = renderer.domElement.width;
   const height = renderer.domElement.height;
-  if (stereo) renderStereo(width, height);
-  else renderMono(width, height);
+  camera.aspect = width / height;
+  camera.updateProjectionMatrix();
+
+  renderer.setScissorTest(false);
+  renderer.setViewport(0, 0, width, height);
+  renderer.clear();
+
+  if (!state.stereo) {
+    renderer.render(scene, camera);
+    return;
+  }
+
+  const half = Math.floor(width / 2);
+  stereoCamera.eyeSep = SETTINGS.eyeSeparation;
+  stereoCamera.aspect = 0.5;
+  stereoCamera.update(camera);
+  renderer.setScissorTest(true);
+
+  renderer.setViewport(0, 0, half, height);
+  renderer.setScissor(0, 0, half, height);
+  renderer.render(scene, stereoCamera.cameraL);
+
+  renderer.setViewport(half, 0, width - half, height);
+  renderer.setScissor(half, 0, width - half, height);
+  renderer.render(scene, stereoCamera.cameraR);
+  renderer.setScissorTest(false);
+}
+
+let lastFrame = performance.now() / 1000;
+let accumulator = 0;
+function frame(milliseconds) {
+  requestAnimationFrame(frame);
+  const now = milliseconds / 1000;
+  const frameDt = clamp(now - lastFrame, 0, 0.1);
+  lastFrame = now;
+
+  if (state.phase === 'menu') {
+    renderMenu(now);
+  } else {
+    accumulator += frameDt;
+    let steps = 0;
+    while (accumulator >= SETTINGS.physicsStep && steps < 8) {
+      updatePhysics(SETTINGS.physicsStep);
+      accumulator -= SETTINGS.physicsStep;
+      steps += 1;
+    }
+    if (steps === 8) accumulator = 0;
+    updatePhase(now);
+    updateCamera();
+  }
+
+  updateAtmosphere(now, frameDt);
+  renderScene();
 }
 
 function resize() {
-  const dpr = Math.min(window.devicePixelRatio || 1, stereo ? 1 : 1.5);
-  renderer.setPixelRatio(dpr);
-  renderer.setSize(innerWidth, innerHeight, false);
+  const width = Math.max(2, Math.floor(window.innerWidth / 2) * 2);
+  const height = Math.max(2, Math.floor(window.innerHeight));
+  renderer.setPixelRatio(1);
+  renderer.setSize(width, height, false);
+}
+
+function handleOrientationChange() {
+  setTimeout(resize, 120);
+  if (!state.phone || state.phase === 'menu') return;
+  sensor.valid = false;
+  sensor.calibrated = false;
+  sensor.lastSampleTime = 0;
+  sensor.samples.length = 0;
+  if (state.phase === 'flying' || state.phase === 'calibrating') {
+    state.phase = 'calibrating';
+    state.phaseStarted = performance.now() / 1000;
+  }
 }
 
 window.addEventListener('resize', resize);
-window.addEventListener('orientationchange', () => setTimeout(resize, 180));
+window.addEventListener('orientationchange', handleOrientationChange);
+if (screen.orientation?.addEventListener) screen.orientation.addEventListener('change', handleOrientationChange);
+
 window.addEventListener('mousemove', event => {
-  input.mouseX = THREE.MathUtils.clamp((event.clientX / innerWidth - .5) * 2, -1, 1);
-  input.mouseY = THREE.MathUtils.clamp((event.clientY / innerHeight - .5) * 2, -1, 1);
+  if (state.phase === 'menu' || state.phone || input.mouseOriginX === null) return;
+  input.mouseX = clamp((event.clientX - input.mouseOriginX) / (window.innerWidth * 0.25), -1, 1);
+  input.mouseY = clamp((event.clientY - input.mouseOriginY) / (window.innerHeight * 0.25), -1, 1);
 });
+
 window.addEventListener('keydown', event => {
-  if (event.code === 'KeyW' || event.code === 'ArrowUp') input.keyPitch = -1;
-  if (event.code === 'KeyS' || event.code === 'ArrowDown') input.keyPitch = 1;
+  if (event.code === 'KeyW' || event.code === 'ArrowUp') input.keyPitch = 1;
+  if (event.code === 'KeyS' || event.code === 'ArrowDown') input.keyPitch = -1;
   if (event.code === 'KeyA' || event.code === 'ArrowLeft') input.keyRoll = -1;
   if (event.code === 'KeyD' || event.code === 'ArrowRight') input.keyRoll = 1;
-  if (event.code === 'KeyR') resetFlight();
-  if (event.code === 'KeyC') toggleCamera();
+  if (event.code === 'KeyR' && state.phase !== 'menu') beginCrash();
 });
+
 window.addEventListener('keyup', event => {
   if (['KeyW', 'KeyS', 'ArrowUp', 'ArrowDown'].includes(event.code)) input.keyPitch = 0;
   if (['KeyA', 'KeyD', 'ArrowLeft', 'ArrowRight'].includes(event.code)) input.keyRoll = 0;
 });
 
-desktopStart.addEventListener('click', () => start({ phone: false }));
-vrStart.addEventListener('click', () => start({ phone: true }));
-recenterButton.addEventListener('click', recenter);
-restartButton.addEventListener('click', resetFlight);
-vrButton.addEventListener('click', () => setStereo(!stereo));
+canvas.addEventListener('pointerup', event => {
+  event.preventDefault();
+  if (state.phone && state.phase === 'flying') recenter(true);
+});
 
-function toggleCamera() {
-  cameraMode = cameraMode === 'chase' ? 'first' : 'chase';
-  cameraButton.textContent = `Camera: ${cameraMode}`;
-}
-cameraButton.addEventListener('click', toggleCamera);
+document.addEventListener('visibilitychange', () => {
+  lastFrame = performance.now() / 1000;
+  accumulator = 0;
+  if (document.visibilityState === 'visible') void acquireWakeLock();
+});
 
 resize();
-requestAnimationFrame(loop);
+resetFlight();
+requestAnimationFrame(frame);
 
-if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-  navigator.serviceWorker.register('./sw.js').catch(() => {});
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
+    .then(registration => registration.update())
+    .catch(() => {});
 }

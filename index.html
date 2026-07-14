@@ -3,49 +3,50 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
-  <meta name="theme-color" content="#8fb2c5" />
+  <meta name="theme-color" content="#9cc5d3" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Skyline VR" />
-  <title>Skyline VR</title>
-  <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="stylesheet" href="styles.css" />
+  <title>Skyline VR — Fable Iteration 1</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
+  <link rel="stylesheet" href="./styles.css?v=fable-1.0.0" />
 </head>
 <body>
-  <canvas id="game" aria-label="Skyline VR flying prototype"></canvas>
+  <canvas id="game" aria-label="Skyline VR flying sandbox"></canvas>
 
-  <section id="start-panel" class="panel">
-    <div class="eyebrow">EARLY FLIGHT PROTOTYPE</div>
-    <h1>Skyline VR</h1>
-    <p>Fly down through a mountain valley, skim the river and make the stone bridge.</p>
+  <main id="start-panel" class="start-panel">
+    <div class="iteration">FABLE · ITERATION 1</div>
+    <h1>Skyline<br />VR</h1>
+    <p class="lead">Dive, bank and thread the valley using only your head.</p>
 
-    <div class="mode-grid">
-      <button id="desktop-start" class="primary">Start desktop</button>
-      <button id="vr-start">Start phone VR</button>
+    <div class="start-actions">
+      <button id="phone-start" class="primary">Start phone VR</button>
+      <button id="desktop-start">Desktop preview</button>
     </div>
 
-    <div class="instructions">
-      <p><strong>Desktop:</strong> move the mouse to steer. W/S also pitch, A/D also roll.</p>
-      <p><strong>Phone VR:</strong> rotate to landscape, tap Start, then place the phone in the headset. Look down to dive and gain speed; tilt your head to bank.</p>
-    </div>
-  </section>
+    <p id="start-status" class="status" role="status">
+      Phone: rotate to landscape, hold your head level, then tap Start.
+    </p>
+    <p class="comfort">Flying in VR can cause motion sickness. Begin with a short session and stop immediately if you feel unwell.</p>
+  </main>
 
-  <div id="hud" class="hud hidden">
-    <div><span>SPD</span><strong id="speed">0</strong></div>
-    <div><span>ALT</span><strong id="altitude">0</strong></div>
-    <div><span>DIST</span><strong id="distance">0</strong></div>
+  <div id="orientation-warning" class="orientation-warning hidden" role="status">
+    <strong>Rotate to landscape</strong>
+    <span>Then hold your head level and tap anywhere to recenter.</span>
   </div>
 
-  <div id="controls" class="controls hidden">
-    <button id="camera-button">Camera: chase</button>
-    <button id="recenter-button">Recenter</button>
-    <button id="vr-button">Stereo: off</button>
-    <button id="restart-button">Restart</button>
+  <div id="eye-message" class="eye-message hidden" aria-live="polite">
+    <span class="eye eye-left"></span>
+    <span class="eye eye-right"></span>
   </div>
 
-  <div id="message" class="message hidden"></div>
-  <div id="rotate" class="rotate hidden">Rotate the phone to landscape</div>
+  <div id="vignette" class="vignette" aria-hidden="true">
+    <i></i><i></i>
+  </div>
+  <div id="fade" class="fade" aria-hidden="true"></div>
 
-  <script defer src="bundle.js"></script>
+  <script type="module" src="./bundle.js?v=fable-1.0.0"></script>
 </body>
 </html>
