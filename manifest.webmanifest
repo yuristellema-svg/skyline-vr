@@ -1,14 +1,14 @@
 {
-  "name": "Skyline VR — Fable Iteration 1",
+  "name": "Skyline VR — Iteration 2 Flight Lab",
   "short_name": "Skyline VR",
-  "description": "A first-person, head-controlled wingsuit flight sandbox for iPhone VR holders.",
+  "description": "An unrestricted head-controlled aerobatic flight laboratory for iPhone VR holders.",
   "id": "./",
-  "start_url": "./?v=fable-1.0.0",
+  "start_url": "./?v=iteration-2-stage-ab-1",
   "scope": "./",
   "display": "standalone",
   "orientation": "landscape",
-  "background_color": "#9cc5d3",
-  "theme_color": "#9cc5d3",
+  "background_color": "#9bb7bd",
+  "theme_color": "#9bb7bd",
   "icons": [
     { "src": "./apple-touch-icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any" },
     { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }

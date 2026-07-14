@@ -1,32 +1,23 @@
-# Fable locked decision record — Iteration 1
+# Fable decisions — Iteration 2
 
-This file replaces the obsolete chase-camera/checkpoint brief.
+The attached **Skyline VR — Iteration 2 Build Brief (Fable, locked)** is the authority. This file is a compact implementation record, not a replacement for that brief.
 
-## Locked
+## Implemented now: Stage A + Stage B
 
-- First-person only; no chase camera
-- Fixed wingtips for spatial grounding
-- Head pitch and roll control the aircraft; head yaw never steers
-- Pitch dead zone 5°, full command at 40°, maximum flight-path pitch ±40°, 45°/s response
-- Roll dead zone 4°, full command at 40°, maximum bank 60°, 60°/s response
-- Tap anywhere to recenter; respawn auto-recenters
-- Assisted physics with 60/100/110/220 km/h floor/cruise/spawn/maximum
-- No stall state and no HUD
-- One straight 4 km × 600 m valley; walls rise 300 m
-- Thirty-metre river; water is fatal
-- Stone bridge one at 1.5 km with a 25 × 14 m opening and 18 m deck
-- Stone bridge two at 2.8 km with an 18 × 10 m opening and 12 m deck
-- Updraft near the far end returns the player to the starting altitude and loops the run
-- Every crash returns to the starting ledge; no checkpoints, lives, or damage
-- Flat-shaded low-poly art, vertex colour, no textures, no shadows, pixel ratio 1
-- Fog from 800–1500 m
-- Per-eye vignette begins above 160 km/h
-- Manual side-by-side stereo, delta-based physics, iPhone DeviceOrientation permission from the Start tap
+- Head pitch and roll command local-body rotation rates around a persistent attitude quaternion. Head yaw is menu-only.
+- No pitch/roll angle limits, no Euler recomposition, no speed spring, no fake bank-to-yaw rule, and no corridor walls.
+- Velocity direction chases the nose; gravity along the path drives acceleration; quadratic drag settles a vertical dive near 130 m/s.
+- Dive-charged automatic boost, low-speed floor/mush, climb refund, G effects, wind streaks, rigid first person, and stiff third person are active.
+- The test box is a 12 km plane with 100 m distance pylons, dense near-field references, and one collision-tested stone bridge.
+- The reticle and seven gaze panels exist in 3D at 2.5 m and are rendered in every eye pass. Menu gesture is >45° yaw for one second; selection dwell is one second.
+- Crash countdown, menu-only recenter, respawn auto-recenter, iPhone Home Screen guidance, standalone manifest, offline service worker, and wake-lock reacquisition are wired.
+- Rendering remains manually scissored stereo at pixel ratio 1 with no shadow maps. Runtime objects are preallocated in hot flight/render paths.
 
-## Deliberately not in Iteration 1
+## Explicitly blocked: Stage C
 
-Third person, sound, score, village, canyon squeeze, weather, night mode, hand input, multiple valleys, and additional game systems.
+No chunk streaming, biome terrain, city, lake/river water, bridge family, floating origin, or soft mountain boundary is implemented. Fable requires Yuri to pass Stage A on the target iPhone first.
 
-## Waiting for Yuri's real-device test
+## Ownership still open
 
-Pitch/roll direction and sensitivity, dead-zone feel, bridge difficulty, terminal-speed sensation, vignette strength, whether tapping is possible through the headset, sustained frame rate, and comfort.
+Yuri owns the default sensitivity, final boost strength, G-effect intensity, and later avatar choice. Everything else above remains locked unless Fable updates the brief.
+

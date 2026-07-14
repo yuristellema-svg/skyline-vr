@@ -1,55 +1,26 @@
-# Skyline VR — Fable Iteration 1
+# Skyline VR — Iteration 2
 
-A first-person, browser-based wingsuit flying sandbox built for an iPhone 14 in a phone VR holder.
+This is the Fable-locked Stage A + Stage B replacement build. It removes the old corridor flight model and ships unrestricted quaternion flight, dive acceleration, dive-charged boost, first/third-person cameras, a stereo reticle, the seven-action gaze menu, crash recovery, and the iPhone Home Screen install flow.
 
-## This build
+Stage C (the streamed 12 km world, biomes, city, water, and multiple bridges) is intentionally not included yet. Fable locked that work behind Yuri approving Stage A flight feel on an actual iPhone.
 
-- First-person only, with fixed wingtips as a stable visual reference
-- Head pitch controls dive/climb; head roll controls bank; head yaw is ignored
-- Alpha-free iPhone tracking using only beta/gamma tilt data
-- 5° pitch and 4° roll dead zones, tap-anywhere recenter, and automatic respawn recenter
-- Assisted energy model: 110 km/h spawn, roughly 100 km/h cruise, 60 km/h floor, 220 km/h ceiling
-- One 4 km × 600 m valley with a 30 m river, two stone bridges, and a looping updraft
-- Water, terrain, valley-wall, and bridge collision
-- 0.3 s white impact fade, 1 s hold, and 3 s mirrored-eye respawn countdown
-- Manual off-axis side-by-side stereo with 64 mm eye separation
-- Dynamic per-eye comfort vignette above 160 km/h
-- Fixed 1× pixel ratio, no shadows, instanced scenery, and 120 Hz fixed-step physics
-- Network-first service worker so future GitHub uploads replace the old build
+## Play
 
-## Upload to GitHub
+- Desktop: choose **Desktop flight test**. Move the pointer to the centre once, then steer with the mouse or W/S/A/D. Press C for camera, Esc for menu, and R to respawn.
+- iPhone: open the HTTPS GitHub Pages link in Safari, add it to the Home Screen for genuine fullscreen, launch the icon in landscape, choose **Start phone VR**, allow motion access, and look straight ahead for calibration.
+- Flight: dive to accelerate. A committed dive above 80 m/s fills the reticle's blue boost arc. With it full, pull up hard while still nose-down to fire the boost.
 
-Upload **everything inside this folder** to the root of `yuristellema-svg/skyline-vr`, including the `vendor` folder. Existing files with the same names should be replaced.
+## GitHub Pages upload
 
-GitHub Pages remains configured as:
+Upload the **contents of this folder**, preserving `src/`, `vendor/`, `tests/`, and `tools/`. Do not upload only the ZIP: GitHub Pages cannot run a game from inside a ZIP.
 
-- Source: Deploy from a branch
-- Branch: `main`
-- Folder: `/(root)`
+For the first Iteration 2 deployment, replace the old root game files with this full folder. In GitHub: **Settings → Pages → Deploy from a branch → `main` → `/ (root)` → Save**.
 
-The permanent game address is:
+After that, updates are modular. Upload only the changed paths Codex names (for example `src/config.js` for feel tuning), plus `sw.js` whenever its cache version changes.
 
-`https://yuristellema-svg.github.io/skyline-vr/?v=fable-1.0.0`
+## Verification
 
-The version query ensures the first load bypasses the previous prototype's old cache. Later builds use a network-first update strategy.
+Run `npm test` for the deterministic physics, collision, PWA, import, and render-pass checks. Run `npm run serve` for a local desktop test.
 
-## Controls
+The detailed acceptance checklist is in [TESTING.md](./TESTING.md). Current feel values and owner decisions are in [FEEL.md](./FEEL.md).
 
-Phone VR:
-
-- Look down: dive and gain speed
-- Look up: climb and lose speed
-- Tilt head right/left: bank and turn
-- Tap anywhere during flight: recenter
-
-Desktop preview:
-
-- Mouse up/down: climb/dive
-- Mouse left/right: bank
-- W/S: climb/dive
-- A/D: bank
-- R: test the crash/respawn sequence
-
-## Honest test boundary
-
-The build can be structurally and visually checked on desktop. Sustained stereo 60 fps, sensor direction, headset access to tap, and ten-minute comfort must be verified on the actual iPhone 14 and headset. Test with Low Power Mode disabled and begin with a short session.

@@ -3,38 +3,42 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
-  <meta name="theme-color" content="#9cc5d3" />
+  <meta name="theme-color" content="#9bb7bd" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Skyline VR" />
-  <title>Skyline VR — Fable Iteration 1</title>
+  <title>Skyline VR — Iteration 2 Flight Lab</title>
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
-  <link rel="stylesheet" href="./styles.css?v=fable-1.0.0" />
+  <link rel="stylesheet" href="./styles.css?v=iteration-2-stage-ab-1" />
 </head>
 <body>
-  <canvas id="game" aria-label="Skyline VR flying sandbox"></canvas>
+  <canvas id="game" aria-label="Skyline VR Iteration 2 flight laboratory"></canvas>
 
   <main id="start-panel" class="start-panel">
-    <div class="iteration">FABLE · ITERATION 1</div>
+    <div class="iteration">FABLE · ITERATION 2 · FLIGHT LAB</div>
     <h1>Skyline<br />VR</h1>
-    <p class="lead">Dive, bank and thread the valley using only your head.</p>
-
+    <p class="lead">Unrestricted loops, rolls, dive-charged boost and two switchable cameras.</p>
     <div class="start-actions">
       <button id="phone-start" class="primary">Start phone VR</button>
-      <button id="desktop-start">Desktop preview</button>
+      <button id="desktop-start">Desktop flight test</button>
     </div>
-
     <p id="start-status" class="status" role="status">
-      Phone: rotate to landscape, hold your head level, then tap Start.
+      Phone: use the Home Screen icon for fullscreen. Desktop: move the pointer to screen centre after launch.
     </p>
-    <p class="comfort">Flying in VR can cause motion sickness. Begin with a short session and stop immediately if you feel unwell.</p>
+    <p class="comfort">Fast aerobatic VR can cause motion sickness. Begin with a short session and stop immediately if you feel unwell.</p>
   </main>
+
+  <aside id="install-hint" class="install-hint hidden" role="status">
+    <strong>Fullscreen phone VR</strong>
+    <span>In Safari tap Share → Add to Home Screen, then open Skyline VR from its icon.</span>
+    <button id="install-dismiss" type="button">Got it</button>
+  </aside>
 
   <div id="orientation-warning" class="orientation-warning hidden" role="status">
     <strong>Rotate to landscape</strong>
-    <span>Then hold your head level and tap anywhere to recenter.</span>
+    <span>Hold your head level. The game will recalibrate automatically.</span>
   </div>
 
   <div id="eye-message" class="eye-message hidden" aria-live="polite">
@@ -42,11 +46,13 @@
     <span class="eye eye-right"></span>
   </div>
 
-  <div id="vignette" class="vignette" aria-hidden="true">
-    <i></i><i></i>
-  </div>
-  <div id="fade" class="fade" aria-hidden="true"></div>
+  <section id="mono-hud" class="mono-hud hidden" aria-label="Desktop flight telemetry">
+    <div><strong data-speed>0 km/h</strong><span data-g>1.0 g</span></div>
+    <div><span>BOOST</span><strong data-boost>0%</strong></div>
+    <div><span data-camera>FIRST PERSON</span><small>C camera · Esc menu · R respawn</small></div>
+    <small data-performance>0 calls · 0k tris · 0 dropped</small>
+  </section>
 
-  <script type="module" src="./bundle.js?v=fable-1.0.0"></script>
+  <script type="module" src="./bundle.js?v=iteration-2-stage-ab-1"></script>
 </body>
 </html>
