@@ -1,0 +1,13 @@
+{
+  "name": "Skyline VR",
+  "short_name": "Skyline VR",
+  "description": "A browser-based head-controlled wingsuit flying prototype.",
+  "start_url": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#91b5c8",
+  "theme_color": "#91b5c8",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

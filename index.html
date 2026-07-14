@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#8fb2c5" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Skyline VR" />
+  <title>Skyline VR</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <canvas id="game" aria-label="Skyline VR flying prototype"></canvas>
+
+  <section id="start-panel" class="panel">
+    <div class="eyebrow">EARLY FLIGHT PROTOTYPE</div>
+    <h1>Skyline VR</h1>
+    <p>Fly down through a mountain valley, skim the river and make the stone bridge.</p>
+
+    <div class="mode-grid">
+      <button id="desktop-start" class="primary">Start desktop</button>
+      <button id="vr-start">Start phone VR</button>
+    </div>
+
+    <div class="instructions">
+      <p><strong>Desktop:</strong> move the mouse to steer. W/S also pitch, A/D also roll.</p>
+      <p><strong>Phone VR:</strong> rotate to landscape, tap Start, then place the phone in the headset. Look down to dive and gain speed; tilt your head to bank.</p>
+    </div>
+  </section>
+
+  <div id="hud" class="hud hidden">
+    <div><span>SPD</span><strong id="speed">0</strong></div>
+    <div><span>ALT</span><strong id="altitude">0</strong></div>
+    <div><span>DIST</span><strong id="distance">0</strong></div>
+  </div>
+
+  <div id="controls" class="controls hidden">
+    <button id="camera-button">Camera: chase</button>
+    <button id="recenter-button">Recenter</button>
+    <button id="vr-button">Stereo: off</button>
+    <button id="restart-button">Restart</button>
+  </div>
+
+  <div id="message" class="message hidden"></div>
+  <div id="rotate" class="rotate hidden">Rotate the phone to landscape</div>
+
+  <script defer src="bundle.js"></script>
+</body>
+</html>
