@@ -1,0 +1,680 @@
+name: Build BlockBoard V3 IPA
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/blockboard-v3.yml'
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 20
+
+    steps:
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Create BlockBoard V3 project
+        shell: bash
+        run: |
+          set -e
+          ROOT="$RUNNER_TEMP/BlockBoardV3"
+          mkdir -p "$ROOT/BlockBoardV3" "$ROOT/BlockBoardV3Keyboard"
+          cd "$ROOT"
+
+          cat > project.yml <<'EOF'
+          name: BlockBoardV3
+          options:
+            deploymentTarget:
+              iOS: '16.0'
+          settings:
+            base:
+              SWIFT_VERSION: '5.0'
+              IPHONEOS_DEPLOYMENT_TARGET: '16.0'
+
+          targets:
+            BlockBoardV3:
+              type: application
+              platform: iOS
+              sources:
+                - BlockBoardV3
+              settings:
+                base:
+                  PRODUCT_BUNDLE_IDENTIFIER: com.blockboard.v3.app
+                  GENERATE_INFOPLIST_FILE: YES
+                  INFOPLIST_KEY_CFBundleDisplayName: BlockBoard V3
+                  TARGETED_DEVICE_FAMILY: '1'
+              dependencies:
+                - target: BlockBoardV3Keyboard
+                  embed: true
+
+            BlockBoardV3Keyboard:
+              type: app-extension
+              platform: iOS
+              sources:
+                - BlockBoardV3Keyboard
+              info:
+                path: BlockBoardV3Keyboard/Info.plist
+                properties:
+                  CFBundleDisplayName: BlockBoard V3
+                  NSExtension:
+                    NSExtensionPointIdentifier: com.apple.keyboard-service
+                    NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController
+                    NSExtensionAttributes:
+                      IsASCIICapable: true
+                      PrimaryLanguage: nl-NL
+                      RequestsOpenAccess: false
+              settings:
+                base:
+                  PRODUCT_BUNDLE_IDENTIFIER: com.blockboard.v3.app.keyboard
+                  APPLICATION_EXTENSION_API_ONLY: YES
+                  TARGETED_DEVICE_FAMILY: '1'
+          EOF
+
+          cat > BlockBoardV3/BlockBoardV3App.swift <<'EOF'
+          import SwiftUI
+
+          @main
+          struct BlockBoardV3App: App {
+              var body: some Scene {
+                  WindowGroup {
+                      VStack(spacing: 16) {
+                          Image(systemName: "hand.raised.fill")
+                              .font(.system(size: 62))
+
+                          Text("BlockBoard V3")
+                              .font(.largeTitle.bold())
+
+                          Text("LOCAL BUFFER • STRICT FILTER")
+                              .font(.caption.bold())
+                              .foregroundStyle(.secondary)
+
+                          Text("This is a NEW keyboard extension, separate from the old BlockBoard.")
+                              .multilineTextAlignment(.center)
+                              .padding(.horizontal)
+
+                          Text("Settings → General → Keyboard → Keyboards → Add New Keyboard → BlockBoard V3")
+                              .multilineTextAlignment(.center)
+                              .foregroundStyle(.secondary)
+                              .padding(.horizontal)
+
+                          Text("Full Access is not required.")
+                              .font(.footnote)
+                              .foregroundStyle(.secondary)
+                      }
+                      .padding()
+                  }
+              }
+          }
+          EOF
+
+          cat > BlockBoardV3Keyboard/KeyboardViewController.swift <<'EOF'
+          import UIKit
+
+          final class KeyboardViewController: UIInputViewController {
+
+              private enum Mode { case letters, numbers }
+
+              private var mode: Mode = .letters
+              private var shifted = false
+
+              // Critical change from v2:
+              // filtering no longer depends on documentContextBeforeInput.
+              // Every BlockBoard keypress is tracked locally first.
+              private var localRawBuffer = ""
+
+              private let rootStack = UIStackView()
+              private let statusLabel = UILabel()
+              private var clearStatusWork: DispatchWorkItem?
+
+              // Standard forms and common variants/related language.
+              // Exact "tick" / "kiet" are deliberately aggressive so the
+              // dangerous prefix never reaches autocomplete when typed normally.
+              private let exactRoots: [String] = [
+                  "tick",
+                  "kiet",
+                  "tickel",
+                  "kietel",
+                  "gekiet",
+                  "kriebel",
+                  "kitzel",
+                  "chatouill",
+                  "cosquill",
+                  "solletic"
+              ]
+
+              // Adjacent transpositions of the dangerous short prefixes:
+              // tick -> itck / tcik / tikc
+              // kiet -> iket / keit / kite
+              private let transposedRoots: Set<String> = [
+                  "itck", "tcik", "tikc",
+                  "iket", "keit"
+              ]
+
+              private let fullTargets: [String] = [
+                  "tickle",
+                  "tickles",
+                  "tickled",
+                  "tickler",
+                  "ticklers",
+                  "tickling",
+                  "ticklish",
+                  "ticklishness",
+                  "tickeling",
+                  "tickel",
+                  "kietel",
+                  "kietelen",
+                  "kietelt",
+                  "kietelde",
+                  "gekieteld",
+                  "kietelig",
+                  "kriebelen"
+              ]
+
+              override func viewDidLoad() {
+                  super.viewDidLoad()
+
+                  // Ask iOS not to add a system dictation button for this keyboard.
+                  // This does NOT disable an app's own microphone/voice-search button.
+                  hasDictationKey = true
+
+                  view.backgroundColor = .systemGray5
+
+                  rootStack.axis = .vertical
+                  rootStack.spacing = 6
+                  rootStack.translatesAutoresizingMaskIntoConstraints = false
+                  view.addSubview(rootStack)
+
+                  NSLayoutConstraint.activate([
+                      rootStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 4),
+                      rootStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -4),
+                      rootStack.topAnchor.constraint(equalTo: view.topAnchor, constant: 5),
+                      rootStack.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -6),
+                      view.heightAnchor.constraint(equalToConstant: 270)
+                  ])
+
+                  buildStatusRow()
+                  rebuildKeys()
+                  seedLocalBufferFromHostIfAvailable()
+              }
+
+              override func textDidChange(_ textInput: UITextInput?) {
+                  super.textDidChange(textInput)
+
+                  // Secondary defense for paste/autocomplete/host changes.
+                  // Apple only gives a proxy, so this is best-effort.
+                  if let before = textDocumentProxy.documentContextBeforeInput {
+                      localRawBuffer = suffix(before, max: 120)
+
+                      if isBlocked(before) {
+                          scrubHostContext()
+                      }
+                  }
+              }
+
+              private func seedLocalBufferFromHostIfAvailable() {
+                  if let before = textDocumentProxy.documentContextBeforeInput {
+                      localRawBuffer = suffix(before, max: 120)
+                  }
+              }
+
+              // MARK: - Normalization
+
+              private func canonical(_ raw: String) -> String {
+                  let folded = raw
+                      .folding(options: [.diacriticInsensitive, .widthInsensitive], locale: .current)
+                      .lowercased()
+
+                  var out = ""
+
+                  for scalar in folded.unicodeScalars {
+                      let mapped: String
+
+                      switch scalar.value {
+                      // ASCII leetspeak
+                      case 0x30: mapped = "o" // 0
+                      case 0x31: mapped = "i" // 1
+                      case 0x33: mapped = "e" // 3
+                      case 0x34: mapped = "a" // 4
+                      case 0x35: mapped = "s" // 5
+                      case 0x37: mapped = "t" // 7
+                      case 0x40: mapped = "a" // @
+                      case 0x24: mapped = "s" // $
+                      case 0x7C: mapped = "i" // |
+
+                      // Common Cyrillic/Greek lookalikes used to evade filters
+                      case 0x0430, 0x03B1: mapped = "a" // а α
+                      case 0x0435, 0x03B5: mapped = "e" // е ε
+                      case 0x0456, 0x03B9: mapped = "i" // і ι
+                      case 0x043E, 0x03BF: mapped = "o" // о ο
+                      case 0x0441: mapped = "c"         // с
+                      case 0x043A, 0x03BA: mapped = "k" // к κ
+                      case 0x0442, 0x03C4: mapped = "t" // т τ
+                      case 0x04CF: mapped = "l"         // ӏ
+                      default:
+                          let s = String(scalar)
+                          if s.rangeOfCharacter(from: .alphanumerics) != nil {
+                              mapped = s
+                          } else {
+                              mapped = ""
+                          }
+                      }
+
+                      out.append(mapped)
+                  }
+
+                  return out
+              }
+
+              private func collapseRepeats(_ s: String) -> String {
+                  var out = ""
+                  var previous: Character?
+
+                  for ch in s {
+                      if ch != previous {
+                          out.append(ch)
+                      }
+                      previous = ch
+                  }
+
+                  return out
+              }
+
+              // MARK: - Detection
+
+              private func isBlocked(_ raw: String) -> Bool {
+                  let clean = canonical(raw)
+                  let collapsed = collapseRepeats(clean)
+
+                  for candidate in [clean, collapsed] {
+                      if candidate.isEmpty { continue }
+
+                      for root in exactRoots where candidate.contains(root) {
+                          return true
+                      }
+
+                      for root in transposedRoots where candidate.contains(root) {
+                          return true
+                      }
+
+                      // Catch one-character deletion and adjacent-transposition
+                      // evasions such as:
+                      // itckling, tikling, tickilng, ticklign, kietlen, etc.
+                      if containsOneEditStructuralVariant(candidate) {
+                          return true
+                      }
+
+                      // Catch one arbitrary extra letter inserted into a target.
+                      if containsTargetAfterRemovingOneCharacter(candidate) {
+                          return true
+                      }
+                  }
+
+                  return false
+              }
+
+              private func containsOneEditStructuralVariant(_ candidate: String) -> Bool {
+                  for target in fullTargets {
+                      for variant in structuralVariants(of: target) {
+                          if variant.count >= 5 && candidate.contains(variant) {
+                              return true
+                          }
+                      }
+                  }
+                  return false
+              }
+
+              private func structuralVariants(of target: String) -> Set<String> {
+                  let chars = Array(target)
+                  var result = Set<String>()
+                  result.insert(target)
+
+                  // One deletion.
+                  if chars.count > 1 {
+                      for i in 0..<chars.count {
+                          var copy = chars
+                          copy.remove(at: i)
+                          result.insert(String(copy))
+                      }
+                  }
+
+                  // One adjacent transposition.
+                  if chars.count > 1 {
+                      for i in 0..<(chars.count - 1) {
+                          var copy = chars
+                          copy.swapAt(i, i + 1)
+                          result.insert(String(copy))
+                      }
+                  }
+
+                  return result
+              }
+
+              private func containsTargetAfterRemovingOneCharacter(_ candidate: String) -> Bool {
+                  let chars = Array(candidate)
+
+                  for target in fullTargets {
+                      let n = target.count
+                      guard n >= 5, chars.count >= n + 1 else { continue }
+
+                      for start in 0...(chars.count - (n + 1)) {
+                          let window = Array(chars[start..<(start + n + 1)])
+
+                          for removeIndex in 0..<window.count {
+                              var copy = window
+                              copy.remove(at: removeIndex)
+
+                              if String(copy) == target {
+                                  return true
+                              }
+                          }
+                      }
+                  }
+
+                  return false
+              }
+
+              // MARK: - Local keystroke enforcement
+
+              private func safeInsert(_ text: String) {
+                  let candidate = suffix(localRawBuffer + text, max: 120)
+
+                  if isBlocked(candidate) {
+                      purgeRecentTypedInput()
+                      blockedFeedback()
+                      return
+                  }
+
+                  textDocumentProxy.insertText(text)
+                  localRawBuffer = candidate
+              }
+
+              private func localDeleteBackward() {
+                  textDocumentProxy.deleteBackward()
+
+                  if !localRawBuffer.isEmpty {
+                      localRawBuffer.removeLast()
+                  } else {
+                      seedLocalBufferFromHostIfAvailable()
+                  }
+              }
+
+              // On a blocked attempt, remove recent typed material rather than
+              // merely refusing the final letter. This prevents "tic" / "kie"
+              // from being left sitting in a search box feeding autocomplete.
+              private func purgeRecentTypedInput() {
+                  var meaningfulRemoved = 0
+                  var rawRemoved = 0
+
+                  while !localRawBuffer.isEmpty &&
+                        meaningfulRemoved < 4 &&
+                        rawRemoved < 16 {
+
+                      let ch = localRawBuffer.removeLast()
+                      textDocumentProxy.deleteBackward()
+                      rawRemoved += 1
+
+                      if canonical(String(ch)).count > 0 {
+                          meaningfulRemoved += 1
+                      }
+                  }
+              }
+
+              // Secondary best-effort cleanup for content inserted outside our
+              // own key buttons (paste, suggestion tap, host replacement).
+              private func scrubHostContext() {
+                  var attempts = 0
+
+                  while attempts < 32 {
+                      let before = textDocumentProxy.documentContextBeforeInput ?? ""
+
+                      guard isBlocked(before) else { break }
+
+                      textDocumentProxy.deleteBackward()
+                      attempts += 1
+                  }
+
+                  if attempts > 0 {
+                      let before = textDocumentProxy.documentContextBeforeInput ?? ""
+                      localRawBuffer = suffix(before, max: 120)
+                      blockedFeedback()
+                  }
+              }
+
+              private func suffix(_ s: String, max: Int) -> String {
+                  if s.count <= max { return s }
+                  return String(s.suffix(max))
+              }
+
+              // MARK: - UI
+
+              private func blockedFeedback() {
+                  UINotificationFeedbackGenerator().notificationOccurred(.error)
+
+                  clearStatusWork?.cancel()
+                  statusLabel.text = "⛔ BLOCKED"
+                  statusLabel.textColor = .systemRed
+
+                  let work = DispatchWorkItem { [weak self] in
+                      self?.statusLabel.text = "BLOCKBOARD V3 • LOCAL FILTER ACTIVE"
+                      self?.statusLabel.textColor = .secondaryLabel
+                  }
+
+                  clearStatusWork = work
+                  DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
+              }
+
+              private func buildStatusRow() {
+                  statusLabel.text = "BLOCKBOARD V3 • LOCAL FILTER ACTIVE"
+                  statusLabel.font = .systemFont(ofSize: 10.5, weight: .semibold)
+                  statusLabel.textColor = .secondaryLabel
+                  statusLabel.textAlignment = .center
+                  statusLabel.heightAnchor.constraint(equalToConstant: 18).isActive = true
+                  rootStack.addArrangedSubview(statusLabel)
+              }
+
+              private func rebuildKeys() {
+                  while rootStack.arrangedSubviews.count > 1 {
+                      let v = rootStack.arrangedSubviews.last!
+                      rootStack.removeArrangedSubview(v)
+                      v.removeFromSuperview()
+                  }
+
+                  switch mode {
+                  case .letters:
+                      addRow("qwertyuiop".map(String.init))
+                      addRow("asdfghjkl".map(String.init), sideInset: 17)
+                      addBottomLetterRow()
+                      addUtilityRow()
+
+                  case .numbers:
+                      addRow(["1","2","3","4","5","6","7","8","9","0"])
+                      addRow(["-","/",":",";","(",")","€","&","@","\""])
+                      addRow([".",",","?","!","'"], sideInset: 34)
+                      addUtilityRow()
+                  }
+              }
+
+              private func addRow(_ labels: [String], sideInset: CGFloat = 0) {
+                  let row = UIStackView()
+                  row.axis = .horizontal
+                  row.spacing = 6
+                  row.distribution = .fillEqually
+
+                  let holder = UIStackView()
+                  holder.axis = .horizontal
+
+                  if sideInset > 0 { holder.addArrangedSubview(spacer(sideInset)) }
+                  holder.addArrangedSubview(row)
+                  if sideInset > 0 { holder.addArrangedSubview(spacer(sideInset)) }
+
+                  for label in labels {
+                      let shown = shifted ? label.uppercased() : label
+
+                      row.addArrangedSubview(makeKey(shown) { [weak self] in
+                          guard let self else { return }
+
+                          let output = self.shifted ? label.uppercased() : label
+                          self.safeInsert(output)
+
+                          if self.shifted {
+                              self.shifted = false
+                              self.rebuildKeys()
+                          }
+                      })
+                  }
+
+                  rootStack.addArrangedSubview(holder)
+              }
+
+              private func addBottomLetterRow() {
+                  let row = UIStackView()
+                  row.axis = .horizontal
+                  row.spacing = 6
+
+                  let shift = makeKey(shifted ? "⇧" : "↑") { [weak self] in
+                      self?.shifted.toggle()
+                      self?.rebuildKeys()
+                  }
+                  shift.widthAnchor.constraint(equalToConstant: 48).isActive = true
+                  row.addArrangedSubview(shift)
+
+                  let letters = UIStackView()
+                  letters.axis = .horizontal
+                  letters.spacing = 6
+                  letters.distribution = .fillEqually
+
+                  for label in "zxcvbnm".map(String.init) {
+                      let shown = shifted ? label.uppercased() : label
+
+                      letters.addArrangedSubview(makeKey(shown) { [weak self] in
+                          guard let self else { return }
+
+                          let output = self.shifted ? label.uppercased() : label
+                          self.safeInsert(output)
+
+                          if self.shifted {
+                              self.shifted = false
+                              self.rebuildKeys()
+                          }
+                      })
+                  }
+
+                  row.addArrangedSubview(letters)
+
+                  let delete = makeKey("⌫") { [weak self] in
+                      self?.localDeleteBackward()
+                  }
+                  delete.widthAnchor.constraint(equalToConstant: 48).isActive = true
+                  row.addArrangedSubview(delete)
+
+                  rootStack.addArrangedSubview(row)
+              }
+
+              private func addUtilityRow() {
+                  let row = UIStackView()
+                  row.axis = .horizontal
+                  row.spacing = 6
+
+                  let modeKey = makeKey(mode == .letters ? "123" : "ABC") { [weak self] in
+                      guard let self else { return }
+                      self.mode = self.mode == .letters ? .numbers : .letters
+                      self.rebuildKeys()
+                  }
+                  modeKey.widthAnchor.constraint(equalToConstant: 58).isActive = true
+                  row.addArrangedSubview(modeKey)
+
+                  // Intentionally no globe/switch button in this sideloaded build.
+                  let space = makeKey("space") { [weak self] in
+                      self?.safeInsert(" ")
+                  }
+                  row.addArrangedSubview(space)
+
+                  let returnKey = makeKey(returnLabel()) { [weak self] in
+                      guard let self else { return }
+
+                      let host = self.textDocumentProxy.documentContextBeforeInput ?? ""
+                      if self.isBlocked(self.localRawBuffer) || self.isBlocked(host) {
+                          self.scrubHostContext()
+                          self.blockedFeedback()
+                      } else {
+                          self.textDocumentProxy.insertText("\n")
+                          self.localRawBuffer = ""
+                      }
+                  }
+                  returnKey.widthAnchor.constraint(equalToConstant: 82).isActive = true
+                  row.addArrangedSubview(returnKey)
+
+                  rootStack.addArrangedSubview(row)
+              }
+
+              private func returnLabel() -> String {
+                  switch textDocumentProxy.returnKeyType {
+                  case .search: return "zoek"
+                  case .go: return "ga"
+                  case .send: return "stuur"
+                  case .done: return "gereed"
+                  case .next: return "volgende"
+                  default: return "return"
+                  }
+              }
+
+              private func spacer(_ width: CGFloat) -> UIView {
+                  let v = UIView()
+                  v.widthAnchor.constraint(equalToConstant: width).isActive = true
+                  return v
+              }
+
+              private func makeKey(_ title: String, action: @escaping () -> Void) -> UIButton {
+                  let button = ClosureButton(type: .system)
+                  button.closure = action
+                  button.setTitle(title, for: .normal)
+                  button.titleLabel?.font = .systemFont(ofSize: title.count > 2 ? 16 : 22)
+                  button.setTitleColor(.label, for: .normal)
+                  button.backgroundColor = .secondarySystemBackground
+                  button.layer.cornerRadius = 5
+                  button.layer.shadowColor = UIColor.black.cgColor
+                  button.layer.shadowOpacity = 0.15
+                  button.layer.shadowRadius = 0.5
+                  button.layer.shadowOffset = CGSize(width: 0, height: 1)
+                  button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+                  button.addTarget(button, action: #selector(ClosureButton.fire), for: .touchUpInside)
+                  return button
+              }
+          }
+
+          final class ClosureButton: UIButton {
+              var closure: (() -> Void)?
+              @objc func fire() { closure?() }
+          }
+          EOF
+
+          xcodegen generate
+
+          xcodebuild \
+            -project BlockBoardV3.xcodeproj \
+            -scheme BlockBoardV3 \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath "$RUNNER_TEMP/BlockBoardV3Derived" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+          APP="$RUNNER_TEMP/BlockBoardV3Derived/Build/Products/Release-iphoneos/BlockBoardV3.app"
+          test -d "$APP"
+          test -d "$APP/PlugIns/BlockBoardV3Keyboard.appex"
+
+          mkdir -p "$RUNNER_TEMP/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/Payload/"
+          cd "$RUNNER_TEMP"
+          zip -qry BlockBoard-V3-unsigned.ipa Payload
+
+      - name: Upload BlockBoard V3 unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlockBoard-V3-unsigned-ipa
+          path: ${{ runner.temp }}/BlockBoard-V3-unsigned.ipa
+          retention-days: 30
