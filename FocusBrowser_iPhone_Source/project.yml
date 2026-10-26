@@ -1,0 +1,44 @@
+name: FocusBrowser
+options:
+  bundleIdPrefix: nl.focusbrowser
+  deploymentTarget:
+    iOS: '16.0'
+settings:
+  base:
+    SWIFT_VERSION: 5.0
+    IPHONEOS_DEPLOYMENT_TARGET: '16.0'
+    TARGETED_DEVICE_FAMILY: '1'
+    CODE_SIGN_STYLE: Automatic
+    GENERATE_INFOPLIST_FILE: NO
+    ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: NO
+
+targets:
+  FocusBrowser:
+    type: application
+    platform: iOS
+    sources:
+      - path: FocusBrowser
+        excludes:
+          - Resources/QuietSearch.js
+          - Info.plist
+      - path: FocusBrowser/Resources/QuietSearch.js
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: nl.focusbrowser.app
+        INFOPLIST_FILE: FocusBrowser/Info.plist
+        PRODUCT_NAME: FocusBrowser
+    info:
+      path: FocusBrowser/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: en
+        CFBundleDisplayName: Focus Browser
+        LSRequiresIPhoneOS: true
+        UIApplicationSupportsDocumentBrowser: false
+        UILaunchScreen: {}
+        UIRequiredDeviceCapabilities:
+          - arm64
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
